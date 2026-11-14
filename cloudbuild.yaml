@@ -1,0 +1,101 @@
+# Builds the Dockerfile, pushes it to Artifact Registry and deploys the frontend to Cloud Run.
+#
+#   gcloud builds submit --config cloudbuild.yaml --project=<project-id> \
+#     --substitutions=_TAG=$(git rev-parse --short HEAD),... .
+#
+# Tag images with the commit SHA so every revision maps to a commit.
+# $PROJECT_ID is provided by Cloud Build. See docs/deployment-gcp.md for the substitutions.
+
+steps:
+  # Build the container image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "--build-arg", "NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}",
+        "--build-arg", "NEXT_PUBLIC_GTM_ID=${_NEXT_PUBLIC_GTM_ID}",
+        "--build-arg", "NEXT_PUBLIC_HOSTINGER_IP=${_NEXT_PUBLIC_HOSTINGER_IP}",
+        "--build-arg", "NEXT_PUBLIC_FIREBASE_API_KEY=${_NEXT_PUBLIC_FIREBASE_API_KEY}",
+        "--build-arg", "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${_NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}",
+        "--build-arg", "NEXT_PUBLIC_FIREBASE_PROJECT_ID=${_NEXT_PUBLIC_FIREBASE_PROJECT_ID}",
+        "--build-arg", "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${_NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}",
+        "--build-arg", "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${_NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID}",
+        "--build-arg", "NEXT_PUBLIC_FIREBASE_APP_ID=${_NEXT_PUBLIC_FIREBASE_APP_ID}",
+        "--build-arg", "NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${_NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID}",
+        "--build-arg", "NEXT_PUBLIC_EARLY_ACCESS_FORM_URL=${_NEXT_PUBLIC_EARLY_ACCESS_FORM_URL}",
+        "--build-arg", "NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID=${_NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID}",
+        "--build-arg", "NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID=${_NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID}",
+        "-t", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$_TAG",
+        ".",
+      ]
+
+  # Push the image to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$_TAG"]
+
+  # Deploy to Cloud Run
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "${_SERVICE_NAME}"
+      - "--image"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$_TAG"
+      - "--region"
+      - "${_REGION}"
+      - "--platform"
+      - "managed"
+      - "--allow-unauthenticated"
+      - "--port"
+      - "3000"
+      - "--memory"
+      - "1Gi"
+      - "--cpu"
+      - "1"
+      # Cost ceiling: the frontend is light (SSR pages, no streaming), so a few instances are enough.
+      - "--max-instances"
+      - "${_MAX_INSTANCES}"
+      - "--min-instances"
+      - "0"
+      - "--concurrency"
+      - "80"
+      # Pages render in well under a second, and chat streams go from the browser straight to the API,
+      # so 30 s is plenty. A short timeout also limits what a hung request can cost.
+      - "--timeout"
+      - "30"
+      - "--cpu-boost"
+      - "--set-env-vars"
+      - "NODE_ENV=production,NEXTAUTH_URL=${_NEXTAUTH_URL}"
+      - "--set-secrets"
+      - "NEXTAUTH_SECRET=${_NEXTAUTH_SECRET_NAME}:latest"
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$_TAG"
+
+# Override these with --substitutions (see docs/deployment-gcp.md).
+# NEXT_PUBLIC_* values are inlined into the client bundle at build time.
+substitutions:
+  _TAG: latest
+  _REGION: us-central1
+  _AR_REPO: coursecorrect
+  _IMAGE_NAME: cc-frontend
+  _SERVICE_NAME: cc-frontend
+  _MAX_INSTANCES: "3"
+  _NEXTAUTH_SECRET_NAME: nextauth-secret
+  _NEXTAUTH_URL: https://example.com
+  _NEXT_PUBLIC_API_URL: https://your-backend.example.com
+  _NEXT_PUBLIC_GTM_ID: GTM-XXXXXXX
+  _NEXT_PUBLIC_HOSTINGER_IP: ""
+  _NEXT_PUBLIC_FIREBASE_API_KEY: ""
+  _NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ""
+  _NEXT_PUBLIC_FIREBASE_PROJECT_ID: ""
+  _NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ""
+  _NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ""
+  _NEXT_PUBLIC_FIREBASE_APP_ID: ""
+  _NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ""
+  _NEXT_PUBLIC_EARLY_ACCESS_FORM_URL: ""
+  _NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID: ""
+  _NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID: ""
+
+options:
+  machineType: "E2_HIGHCPU_8"
