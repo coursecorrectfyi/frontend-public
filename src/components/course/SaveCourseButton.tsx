@@ -1,6 +1,7 @@
 import { useFirebaseSignIn } from '@/hooks/use-firebase-sign-in';
 import { useSavedCourses } from '@/hooks/use-saved-courses';
-import { BookmarkAddTwoTone, BookmarkRemove } from '@mui/icons-material';
+import BookmarkAddTwoTone from '@mui/icons-material/BookmarkAddTwoTone';
+import BookmarkRemove from '@mui/icons-material/BookmarkRemove';
 import { Alert, IconButton, Portal, Snackbar, Tooltip } from '@mui/material';
 import { useMemo, useState } from 'react';
 import { trackSaveCourse } from '@/utils/analytics';

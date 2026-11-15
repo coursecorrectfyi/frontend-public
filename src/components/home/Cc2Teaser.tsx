@@ -1,6 +1,7 @@
 'use client'
 
-import { AutoAwesomeOutlined, KeyboardArrowRightRounded } from '@mui/icons-material'
+import AutoAwesomeOutlined from '@mui/icons-material/AutoAwesomeOutlined';
+import KeyboardArrowRightRounded from '@mui/icons-material/KeyboardArrowRightRounded';
 import { alpha, Box, Button, Container, Stack, Typography } from '@mui/material'
 import Link from 'next/link'
 

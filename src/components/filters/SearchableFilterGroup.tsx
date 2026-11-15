@@ -1,6 +1,6 @@
 'use client';
 
-import { Search } from '@mui/icons-material';
+import Search from '@mui/icons-material/Search';
 import { Box, Checkbox, FormControlLabel, FormGroup, InputAdornment, TextField, Typography } from '@mui/material';
 import * as React from 'react';
 import { FilterGroupProps } from './FilterGroup';

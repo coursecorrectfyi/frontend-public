@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 async function handleRequest(
   request: NextRequest,
   params: Promise<{ slug?: string[] }>
-) {
+): Promise<NextResponse> {
   const { slug } = await params;
   const hostingerIp = process.env.NEXT_PUBLIC_HOSTINGER_IP;
 
@@ -86,7 +86,7 @@ async function handleRequest(
   console.log('[Blog Proxy] Request path:', originalPath);
   console.log('[Blog Proxy] Proxying to:', `http://${hostingerIp}${wordpressPath}`);
 
-  return new Promise((resolve) => {
+  return new Promise<NextResponse>((resolve) => {
     const makeRequest = (path: string, followRedirects = true): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: Buffer }> => {
       return new Promise((resolveRequest, rejectRequest) => {
         const options = {

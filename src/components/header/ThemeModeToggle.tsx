@@ -4,7 +4,7 @@ import IconButton from '@mui/material/IconButton';
 import { useColorScheme, useTheme } from '@mui/material/styles';
 import Tooltip from '@mui/material/Tooltip';
 
-function CssVarsModeToggle(props: { onChange: (newMode: string) => void }) {
+function CssVarsModeToggle(props: { onChange: (newMode: 'light' | 'dark') => void }) {
   const { mode, systemMode, setMode } = useColorScheme();
   const calculatedMode = mode === 'system' ? systemMode : mode;
 

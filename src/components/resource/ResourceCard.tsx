@@ -2,7 +2,7 @@
 
 import type { LearningResource } from '@/types/resource';
 import { trackSearchResultClick, trackEnrollClick } from '@/utils/analytics';
-import { ArrowOutwardTwoTone } from '@mui/icons-material';
+import ArrowOutwardTwoTone from '@mui/icons-material/ArrowOutwardTwoTone';
 import {
   Box, Button, Card, Chip, Rating, styled, Tooltip, Typography,
 } from '@mui/material';

@@ -1,24 +1,45 @@
 import type { NextConfig } from "next";
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
-// Only validate NEXT_PUBLIC_* variables at build time
-// Other variables (GOOGLE_CLIENT_ID, NEXTAUTH_SECRET, etc.) are runtime-only
-const requiredBuildTimeEnvVars = [
-  'NEXT_PUBLIC_API_URL',
-  'NEXT_PUBLIC_GTM_ID',
-] as const;
+/**
+ * NEXT_PUBLIC_* values are inlined into the client bundle by `next build`. A bundle built without
+ * them cannot be fixed by setting the variables at runtime (e.g. on Cloud Run): it has to be
+ * rebuilt. So the production build refuses to run without them.
+ *
+ * The check runs only when producing a production bundle. `next dev`, `next start` and the test suite load this
+ * file too and do not need the variables. `next lint` and `next typegen` also load it with PHASE_PRODUCTION_BUILD
+ * without producing a bundle, so they are exempted by name (fail closed: any other command in that phase validates).
+ * Runtime-only variables (NEXTAUTH_SECRET, NEXTAUTH_URL) are not checked here.
+ */
+export const REQUIRED_BUILD_ENV = ["NEXT_PUBLIC_API_URL", "NEXT_PUBLIC_GTM_ID"] as const;
 
-// Check for required build-time environment variables
-requiredBuildTimeEnvVars.forEach((envVar) => {
-  if (!process.env[envVar]) {
-    console.error(`Missing required environment variable: ${envVar}`);
-    process.exit(1);
+/** Variables that must also be absolute http(s) URLs. */
+const URL_BUILD_ENV: ReadonlyArray<(typeof REQUIRED_BUILD_ENV)[number]> = ["NEXT_PUBLIC_API_URL"];
+
+export function assertRequiredBuildEnv(env: Record<string, string | undefined> = process.env): void {
+  const problems: string[] = [];
+  for (const name of REQUIRED_BUILD_ENV) {
+    const value = env[name]?.trim();
+    if (!value || value === "undefined") {
+      problems.push(`${name} is not set`);
+    } else if (URL_BUILD_ENV.includes(name) && !/^https?:\/\/[^/\s]+/i.test(value)) {
+      problems.push(`${name} must be an absolute http(s) URL, got "${value}"`);
+    }
   }
-});
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid build-time environment:\n  - ${problems.join("\n  - ")}\n` +
+        "NEXT_PUBLIC_* values are inlined into the bundle at build time. Set them in the environment " +
+        "or in .env.local (see .env.example and README.md).",
+    );
+  }
+}
 
 const nextConfig: NextConfig = {
   async redirects() {
     return [
-      // Legacy course detail URLs → new /learn route (301 = permanent, transfers SEO equity)
+      // Legacy course detail URLs → new /learn route. `permanent: true` makes Next.js answer 308,
+      // which search engines treat like a 301 (transfers SEO equity).
       {
         source: '/course/:slug/:id',
         destination: '/learn/:slug/:id',
@@ -54,4 +75,18 @@ const nextConfig: NextConfig = {
   }
 };
 
-export default nextConfig;
+export { nextConfig };
+
+/** Next CLI commands that load the config in PHASE_PRODUCTION_BUILD but do not produce a bundle. */
+const NON_BUNDLING_COMMANDS = ["lint", "typegen"];
+
+export function shouldValidateBuildEnv(phase: string, argv: string[] = process.argv): boolean {
+  if (phase !== PHASE_PRODUCTION_BUILD) return false;
+  const command = argv[2]; // e.g. ["node", ".../next", "typegen"]
+  return !NON_BUNDLING_COMMANDS.includes(command);
+}
+
+export default function config(phase: string): NextConfig {
+  if (shouldValidateBuildEnv(phase)) assertRequiredBuildEnv();
+  return nextConfig;
+}

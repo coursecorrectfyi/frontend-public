@@ -1,7 +1,7 @@
 'use client'
 
 import GradientText from '@/components/typography/GradientText'
-import { ExpandMore } from '@mui/icons-material'
+import ExpandMore from '@mui/icons-material/ExpandMore';
 import {
   Accordion,
   AccordionDetails,

@@ -4,7 +4,8 @@ import { CurrentPage } from '@/api/chat';
 import { trackEvent } from '@/utils/analytics';
 import { useFirebaseSignIn } from '@/hooks/use-firebase-sign-in';
 import KeyboardArrowRightRounded from '@mui/icons-material/KeyboardArrowRightRounded';
-import { RestartAlt, Send as SendIcon } from '@mui/icons-material';
+import RestartAlt from '@mui/icons-material/RestartAlt';
+import SendIcon from '@mui/icons-material/Send';
 import { alpha, Box, Button, IconButton, Paper, Stack, TextField, Tooltip, Typography, useTheme } from '@mui/material';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
@@ -179,10 +180,7 @@ export default function Chat({
           ) : (
             <>
               {defaultMessage && (
-                <MessageBubble
-                  message={defaultMessage}
-                  isNewResponse={false}
-                />
+                <MessageBubble message={defaultMessage} />
               )}
 
               {/* Quick Prompts - only show when no messages and we have prompts */}

@@ -2,12 +2,10 @@
 
 import { useResourceDetail } from '@/hooks/use-resource-detail'
 import type { AIInsights } from '@/types/resource'
-import {
-  ArrowOutwardTwoTone,
-  SmartToyOutlined,
-  WorkOutlined,
-  StarOutlined,
-} from '@mui/icons-material'
+import ArrowOutwardTwoTone from '@mui/icons-material/ArrowOutwardTwoTone';
+import SmartToyOutlined from '@mui/icons-material/SmartToyOutlined';
+import WorkOutlined from '@mui/icons-material/WorkOutlined';
+import StarOutlined from '@mui/icons-material/StarOutlined';
 import SaveCourseButton from '../course/SaveCourseButton'
 import {
   Alert,

@@ -3,7 +3,8 @@
 import type { LearningResource, ResourceFilters } from '@/types/resource';
 import { flattenPages } from '@/hooks/use-search-resources';
 import { trackSearchResultsLoaded, trackSearchError } from '@/utils/analytics';
-import { CloseOutlined, TuneOutlined } from '@mui/icons-material';
+import CloseOutlined from '@mui/icons-material/CloseOutlined';
+import TuneOutlined from '@mui/icons-material/TuneOutlined';
 import {
   Alert, Box, Button, Checkbox, CircularProgress, Divider,
   Drawer, FormControlLabel, FormGroup, IconButton, MenuItem,

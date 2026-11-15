@@ -1,6 +1,6 @@
 'use client';
 
-import { TryRounded } from '@mui/icons-material';
+import TryRounded from '@mui/icons-material/TryRounded';
 import { alpha, Box, Container, Fab, Paper, SwipeableDrawer, useMediaQuery, useTheme } from '@mui/material';
 import { ReactNode, useRef, useState } from 'react';
 import { ImperativePanelHandle, Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';

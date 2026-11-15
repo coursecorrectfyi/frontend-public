@@ -1,7 +1,7 @@
 import YouTubeEmbed from "@/components/YouTubeEmbed";
 import { socialLinks } from "@/config/content/social";
 import MainLayout from "@/layouts/MainLayout";
-import { ExpandMore } from "@mui/icons-material";
+import ExpandMore from '@mui/icons-material/ExpandMore';
 import { Accordion, AccordionDetails, AccordionSummary, Container, Link, Stack, Typography } from "@mui/material";
 
 export default function ContactUs() {

@@ -1,12 +1,10 @@
 'use client'
 
 import GradientText from '@/components/typography/GradientText'
-import {
-  AutoAwesomeOutlined,
-  TrendingUpOutlined,
-  WorkOutlined,
-  StarOutlined,
-} from '@mui/icons-material'
+import AutoAwesomeOutlined from '@mui/icons-material/AutoAwesomeOutlined';
+import TrendingUpOutlined from '@mui/icons-material/TrendingUpOutlined';
+import WorkOutlined from '@mui/icons-material/WorkOutlined';
+import StarOutlined from '@mui/icons-material/StarOutlined';
 import {
   alpha,
   Box,

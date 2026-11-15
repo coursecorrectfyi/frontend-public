@@ -2,11 +2,11 @@ import { getResourceById } from '@/api/resources'
 import { SITE_URL } from '@/config/siteConfig'
 import MainLayout from '@/layouts/MainLayout'
 import SplitViewLayout from '@/layouts/SplitViewLayout'
-import CourseChat from '@/app/course/[slug]/[id]/CourseChat'
+import ResourceChat from '@/components/resource/ResourceChat'
 import ResourceDetailPanel from '@/components/resource/ResourceDetailPanel'
 import type { Metadata } from 'next'
 
-// TODO F6.7: Replace CourseChat with the new Cora panel once M8 (RAG chat) is complete
+// TODO F6.7: Replace ResourceChat with the new Cora panel once M8 (RAG chat) is complete
 
 interface LearnPageProps {
   params: Promise<{
@@ -35,7 +35,7 @@ export default async function LearnPage(props: LearnPageProps) {
   return (
     <MainLayout>
       <SplitViewLayout
-        leftContent={<CourseChat courseId={id} />}
+        leftContent={<ResourceChat resourceId={id} />}
         rightContent={<ResourceDetailPanel resourceId={id} urlSlug={slug} />}
       />
     </MainLayout>

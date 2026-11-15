@@ -3,6 +3,7 @@
 import { getSubjects, Subject } from '@/api/subjects';
 import CustomModal from '@/layouts/CustomModal';
 import { trackSearch } from '@/utils/analytics';
+import { navigateTo } from '@/utils/navigation';
 import { onOpenSearch } from '@/utils/search-events';
 import SearchIcon from '@mui/icons-material/Search';
 import { Autocomplete, Divider, InputAdornment, Stack, TextField } from '@mui/material';
@@ -183,7 +184,7 @@ export default function AppSearch({ searchLabel, isHomePage, sx }: AppSearchProp
       .split(/\s+/)
       .map(term => encodeURIComponent(term))
       .join('+');
-    window.location.href = `/search?q=${encodedTerm}`;
+    navigateTo(`/search?q=${encodedTerm}`);
   };
 
   const handleSubmit = (event: React.FormEvent) => {

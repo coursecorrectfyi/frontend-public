@@ -7,12 +7,6 @@ export const ERR_PERMISSION_DENIED = 'You don\'t have permission to view saved i
 
 const baseUrl = process.env.NEXT_PUBLIC_API_URL;
 
-export interface SearchFilters {
-  levels: string[];
-  languages: string[];
-  providers: string[];
-}
-
 export async function getSavedCourses(token: string): Promise<LearningResource[]> {
   if (!token) throw new Error(ERR_NO_AUTH_TOKEN);
 
@@ -29,28 +23,6 @@ export async function getSavedCourses(token: string): Promise<LearningResource[]
 
   const json: { data: LearningResource[] } = await response.json();
   return json.data ?? [];
-}
-
-// TODO F2: searchCourses is used by legacy components still being rebuilt.
-// New code should use searchResources() from @/api/resources instead.
-export async function searchCourses(query: string, filters?: SearchFilters) {
-  const searchParams: Record<string, any> = { query };
-  if (filters) {
-    searchParams.filter = {
-      ...(filters.levels?.length && { 'metadata.properties.course_level': filters.levels }),
-      ...(filters.languages?.length && { 'metadata.properties.course_language': filters.languages }),
-      ...(filters.providers?.length && { 'metadata.properties.course_provider': filters.providers }),
-    };
-  }
-
-  const response = await fetch(`${baseUrl}/api/v1/courses/search?page=1`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(searchParams),
-  });
-
-  if (!response.ok) throw new Error('Search request failed');
-  return response.json();
 }
 
 export async function addCourseToShortlist(token: string, courseId: string) {
@@ -74,24 +46,5 @@ export async function removeCourseFromShortlist(token: string, courseId: string)
   });
 
   if (!response.ok) throw new Error('Failed to remove item');
-  return response.json();
-}
-
-export async function getCourseById(courseId: string) {
-  if (!courseId) {
-    throw new Error('Invalid course ID');
-  }
-
-  const response = await fetch(
-    `${baseUrl}/api/v1/courses/details/${courseId}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-
-  if (!response.ok) throw new Error('Failed to get course');
   return response.json();
 }

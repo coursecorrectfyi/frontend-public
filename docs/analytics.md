@@ -100,12 +100,18 @@ Located in `src/utils/analytics.ts`:
 
 #### 2.3 Event Tracking Integration
 Tracking functions are integrated into:
-- `AppSearch.tsx` - Search queries
-- `CourseTableCard.tsx` - Search results and enroll buttons
-- `SaveCourseButton.tsx` - Save/unsave actions
-- `AuthButton.tsx` - Sign-in events
-- `CourseDetailsContainer.tsx` - Course detail page interactions
-- `CourseDetailsDialog.tsx` - Dialog interactions
+- `components/AppSearch.tsx` - Search queries (`search`)
+- `components/resource/ResourceList.tsx` - Search outcome (`search_results_loaded`, `search_error`; search page only)
+- `components/resource/ResourceCard.tsx` - Result clicks and enroll buttons (`search_result_click`, `enroll_click`)
+- `components/resource/ResourceDetailPanel.tsx` - Enroll on the detail page (`enroll_click`, source `course_detail`)
+- `components/course/SaveCourseButton.tsx` - Save/unsave actions (`save_course`)
+- `hooks/use-firebase-sign-in.ts` - Sign-in events (`user_sign_in`)
+- `components/Chat.tsx`, `components/header/HeaderNavBar.tsx`, `components/header/HeaderNavDropdown.tsx`,
+  `app/page.tsx`, `app/get-learning-path/page.tsx` - Learning-path CTA clicks (`learning_path_cta_click`)
+- `components/early-access/EarlyAccessModal.tsx` - Early-access funnel (`early_access_modal_open`,
+  `early_access_intent_selected`, `early_access_signup`)
+
+Event names and parameters are asserted in `src/utils/analytics.test.ts`; renaming one breaks the GTM triggers above.
 
 ### Step 3: Testing
 

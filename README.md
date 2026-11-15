@@ -24,7 +24,8 @@ src/
   lib/          Firebase client
   theme/        MUI theme (light/dark)
   types/        shared types
-docs/           backend API contract, analytics, schema markup, video and deployment notes
+  test/         test harness (setup, mocks, fixtures); tests sit next to the code as *.test.ts(x)
+docs/           backend API contract, testing guide, analytics, schema markup, video and deployment notes
 public/         static assets
 ```
 
@@ -42,11 +43,13 @@ Search and detail pages work without Firebase; sign-in, saved resources and high
 
 ## Backend API
 
-The frontend calls the [CourseCorrect backend](https://github.com/coursecorrectfyi/backend-public) API. Its contract (endpoints, limits, error bodies, chat stream events) and the list of frontend changes it still needs are in [docs/backend-api.md](docs/backend-api.md), a copy of the backend's `docs/api.md`.
+The frontend calls the [CourseCorrect backend](https://github.com/coursecorrectfyi/backend-public) API. Its contract (endpoints, limits, error bodies, chat stream events, requirements for clients) is in [docs/backend-api.md](docs/backend-api.md), a copy of the backend's `docs/api.md`.
 
 ## Configuration
 
 All configuration is through environment variables (see `.env.example`). `NEXT_PUBLIC_*` values are inlined into the client bundle at build time, so they must be set when running `npm run build`.
+
+`npm run build` refuses to start if `NEXT_PUBLIC_API_URL` or `NEXT_PUBLIC_GTM_ID` is missing (or if the API URL is not an absolute `http(s)` URL): a bundle built without them cannot be fixed by setting the variables at runtime. The check lives in `next.config.ts` and only runs for the production build; `npm run dev`, `npm start`, `npm run lint` and the tests don't need the variables.
 
 | Variable | When | Description |
 |---|---|---|
@@ -65,7 +68,14 @@ All configuration is through environment variables (see `.env.example`). `NEXT_P
 | `npm run dev` | Dev server with Turbopack on port 3001 |
 | `npm run build` | Production build (`output: 'standalone'`) |
 | `npm start` | Serve the production build |
-| `npm run lint` | ESLint |
+| `npm run lint` | ESLint (`eslint .`) |
+| `npm test` | Unit and component tests (Vitest); no backend, Firebase or network needed |
+| `npm run test:watch` | Tests in watch mode |
+| `npm run test:coverage` | Tests with a coverage report in `coverage/` |
+| `npm run typecheck` | TypeScript type check (`next build` skips it: `ignoreBuildErrors` is on) |
+| `npm run verify` | Acceptance run: `npm ci`, tests, coverage, typecheck, build, with a summary |
+
+See [docs/testing.md](docs/testing.md) for how the tests work and how to write them.
 
 ## Deployment
 

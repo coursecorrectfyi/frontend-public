@@ -1,5 +1,4 @@
 import type {
-  LearningResource,
   LearningResourceDetail,
   ResourceFilters,
   ResourceSearchResponse,
@@ -45,31 +44,4 @@ export async function getResourceById(id: string): Promise<LearningResourceDetai
   const response = await fetch(`${baseUrl}/api/v1/resources/${id}`)
   if (!response.ok) throw new Error('Failed to fetch resource')
   return response.json()
-}
-
-// ── Saved resources ───────────────────────────────────────────────────────────
-
-export async function getSavedResources(token: string): Promise<LearningResource[]> {
-  const response = await fetch(`${baseUrl}/api/v1/saved`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!response.ok) throw new Error('Failed to fetch saved resources')
-  const json = await response.json()
-  return json.data
-}
-
-export async function saveResource(token: string, resourceId: string): Promise<void> {
-  const response = await fetch(`${baseUrl}/api/v1/saved/${resourceId}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!response.ok) throw new Error('Failed to save resource')
-}
-
-export async function unsaveResource(token: string, resourceId: string): Promise<void> {
-  const response = await fetch(`${baseUrl}/api/v1/saved/${resourceId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!response.ok) throw new Error('Failed to remove saved resource')
 }

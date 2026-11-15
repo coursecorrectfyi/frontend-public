@@ -1,7 +1,8 @@
 'use client'
 
 import GradientText from '@/components/typography/GradientText'
-import { CheckCircleOutlined, CancelOutlined } from '@mui/icons-material'
+import CheckCircleOutlined from '@mui/icons-material/CheckCircleOutlined';
+import CancelOutlined from '@mui/icons-material/CancelOutlined';
 import {
   Box,
   Container,

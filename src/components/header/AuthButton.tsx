@@ -1,6 +1,8 @@
 'use client';
 
-import { BookmarkBorder, Google, Logout } from '@mui/icons-material';
+import BookmarkBorder from '@mui/icons-material/BookmarkBorder';
+import Google from '@mui/icons-material/Google';
+import Logout from '@mui/icons-material/Logout';
 import { Avatar, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Tooltip } from '@mui/material';
 import { signIn, signOut, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
