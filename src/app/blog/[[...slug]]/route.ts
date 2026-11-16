@@ -1,5 +1,28 @@
 import http from 'http';
 import { NextRequest, NextResponse } from 'next/server';
+import { MAX_REDIRECTS } from './constants';
+
+const PUBLIC_ORIGIN = 'https://coursecorrect.fyi';
+
+/**
+ * Why a raw (still percent-encoded) path must not be forwarded, or undefined if it's fine. The path is forwarded
+ * as received; decoding it first would turn `..%2F` into a real `../` that WordPress resolves outside /blog (B10).
+ */
+function unsafePathReason(rawPath: string): string | undefined {
+  if (rawPath !== '/blog' && !rawPath.startsWith('/blog/')) return 'Path must start with /blog';
+  // An encoded slash or backslash can only serve to smuggle a path separator past the checks.
+  if (/%2f|%5c/i.test(rawPath)) return 'Encoded path separator';
+  for (const segment of rawPath.split('/')) {
+    let decoded = segment;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return 'Malformed percent-encoding';
+    }
+    if (decoded === '.' || decoded === '..') return 'Dot segment';
+  }
+  return undefined;
+}
 
 async function handleRequest(
   request: NextRequest,
@@ -11,20 +34,19 @@ async function handleRequest(
   if (!hostingerIp) {
     console.error('[Blog Proxy] NEXT_PUBLIC_HOSTINGER_IP is not set');
     return NextResponse.json(
-      { error: 'Blog proxy configuration error' },
+      { error: 'The blog is not available right now.' },
       { status: 500 }
     );
   }
 
-  // Get the original path and sanitize it
-  let originalPath = request.nextUrl.pathname;
-
-  // URL decode the path to handle encoded characters
+  // The path as received: still percent-encoded, which is what gets forwarded (B10). A decoded copy is only used
+  // to recognise problems.
+  let rawPath = request.nextUrl.pathname;
+  let originalPath = rawPath;
   try {
-    originalPath = decodeURIComponent(originalPath);
-  } catch (e) {
-    // If decoding fails, use the original path
-    console.warn('[Blog Proxy] Failed to decode path, using original:', originalPath);
+    originalPath = decodeURIComponent(rawPath);
+  } catch {
+    // Malformed percent-encoding: unsafePathReason() rejects it below.
   }
 
   // Clean up any corrupted path that might contain CORS error text
@@ -34,6 +56,8 @@ async function handleRequest(
     const match = originalPath.match(/^(\/blog\/[^']+)/);
     if (match) {
       originalPath = match[1];
+      // Cut the raw path at the same place: the first quote, literal or encoded.
+      rawPath = rawPath.slice(0, rawPath.search(/'|%27/i));
       console.warn('[Blog Proxy] Cleaned corrupted path to:', originalPath);
     } else {
       console.error('[Blog Proxy] Invalid path detected:', originalPath);
@@ -61,15 +85,14 @@ async function handleRequest(
     );
   }
 
-  // Build the path: /blog or /blog/slug1/slug2/...
-  // Use pathname directly for more reliable path handling
-  let blogPath = originalPath;
+  // Forward the raw path; refuse anything that could reach WordPress outside /blog.
+  let blogPath = rawPath;
 
-  // Ensure it starts with /blog
-  if (!blogPath.startsWith('/blog')) {
-    console.error('[Blog Proxy] Path does not start with /blog:', blogPath);
+  const unsafe = unsafePathReason(blogPath);
+  if (unsafe) {
+    console.error('[Blog Proxy] Rejected path:', unsafe, blogPath);
     return NextResponse.json(
-      { error: 'Invalid path', details: 'Path must start with /blog' },
+      { error: 'Invalid path', details: unsafe === 'Path must start with /blog' ? unsafe : 'Path is not allowed' },
       { status: 400 }
     );
   }
@@ -87,7 +110,7 @@ async function handleRequest(
   console.log('[Blog Proxy] Proxying to:', `http://${hostingerIp}${wordpressPath}`);
 
   return new Promise<NextResponse>((resolve) => {
-    const makeRequest = (path: string, followRedirects = true): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: Buffer }> => {
+    const makeRequest = (path: string, redirectsLeft = MAX_REDIRECTS): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: Buffer }> => {
       return new Promise((resolveRequest, rejectRequest) => {
         const options = {
           hostname: hostingerIp,
@@ -117,28 +140,32 @@ async function handleRequest(
             chunks.push(chunk);
           });
 
+          res.on('error', rejectRequest);
           res.on('end', () => {
-            const body = Buffer.concat(chunks); // Keep as Buffer, don't convert to string!
+            // Any exception here would escape the socket callback and leave the request hanging (B11).
+            try {
+              const body = Buffer.concat(chunks); // Keep as Buffer, don't convert to string!
 
-            // Handle redirects
-            if (followRedirects && res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-              const location = res.headers.location;
-              console.log('[Blog Proxy] Redirect detected:', res.statusCode, 'to', location);
+              // Follow redirects to our own domain, at most MAX_REDIRECTS times (a loop then reaches the browser,
+              // which has its own limit). A relative Location is resolved against the current path (B11).
+              if (redirectsLeft > 0 && res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                const location = res.headers.location;
+                console.log('[Blog Proxy] Redirect detected:', res.statusCode, 'to', location);
 
-              const locationUrl = new URL(location);
-              if (locationUrl.hostname === 'coursecorrect.fyi' || locationUrl.hostname === 'www.coursecorrect.fyi') {
-                const redirectPath = locationUrl.pathname + locationUrl.search;
-                console.log('[Blog Proxy] Following redirect to IP:', redirectPath);
+                const locationUrl = new URL(location, `${PUBLIC_ORIGIN}${path}`);
+                if (locationUrl.hostname === 'coursecorrect.fyi' || locationUrl.hostname === 'www.coursecorrect.fyi') {
+                  const redirectPath = locationUrl.pathname + locationUrl.search;
+                  console.log('[Blog Proxy] Following redirect to IP:', redirectPath);
 
-                makeRequest(redirectPath, true).then(resolveRequest).catch(rejectRequest);
-                return;
-              } else {
-                resolveRequest({ statusCode: res.statusCode || 200, headers: res.headers, body });
-                return;
+                  makeRequest(redirectPath, redirectsLeft - 1).then(resolveRequest).catch(rejectRequest);
+                  return;
+                }
               }
-            }
 
-            resolveRequest({ statusCode: res.statusCode || 200, headers: res.headers, body });
+              resolveRequest({ statusCode: res.statusCode || 200, headers: res.headers, body });
+            } catch (error) {
+              rejectRequest(error);
+            }
           });
         });
 
@@ -158,7 +185,7 @@ async function handleRequest(
       });
     };
 
-    makeRequest(wordpressPath, true)
+    makeRequest(wordpressPath)
       .then(({ statusCode, headers, body }) => {
         console.log('[Blog Proxy] Final response status:', statusCode);
         console.log('[Blog Proxy] Content-Type:', headers['content-type']);
@@ -182,7 +209,8 @@ async function handleRequest(
           const headerValue = headers[headerName.toLowerCase()];
           if (headerValue) {
             if (Array.isArray(headerValue)) {
-              responseHeaders.set(headerName, headerValue[0]);
+              // Set-Cookie comes as an array, one entry per cookie: forward them all (B12).
+              for (const value of headerValue) responseHeaders.append(headerName, value);
             } else if (typeof headerValue === 'string' || typeof headerValue === 'number') {
               responseHeaders.set(headerName, String(headerValue));
             }
@@ -250,13 +278,10 @@ async function handleRequest(
         }));
       })
       .catch((error) => {
-        console.error('[Blog Proxy] Error:', error);
+        // Details (which include the WordPress origin's address) go to the server log only, never to the client.
+        console.error('[Blog Proxy] Error:', error, `(upstream path: ${wordpressPath})`);
         resolve(NextResponse.json(
-          {
-            error: 'Failed to proxy to WordPress',
-            details: error instanceof Error ? error.message : 'Unknown error',
-            attemptedUrl: `http://${hostingerIp}${wordpressPath}`
-          },
+          { error: 'Failed to load the blog. Please try again later.' },
           { status: 502 }
         ));
       });

@@ -1,5 +1,7 @@
 import { getResourceById } from '@/api/resources'
 import { SITE_URL } from '@/config/siteConfig'
+import { relayHeaders } from '@/lib/server/relay'
+import { resourcePath } from '@/utils/resource-url'
 import MainLayout from '@/layouts/MainLayout'
 import SplitViewLayout from '@/layouts/SplitViewLayout'
 import ResourceChat from '@/components/resource/ResourceChat'
@@ -16,13 +18,15 @@ interface LearnPageProps {
 }
 
 export async function generateMetadata({ params }: LearnPageProps): Promise<Metadata> {
-  const { slug, id } = await params
+  const { id } = await params
   try {
-    const resource = await getResourceById(id)
+    // Fetched for the visitor (relay headers), so it counts against their limits, not the server's.
+    const resource = await getResourceById(id, { headers: await relayHeaders() })
     return {
       title: `${resource.title} | CourseCorrect`,
       description: resource.ai_summary ?? undefined,
-      alternates: { canonical: `${SITE_URL}/learn/${slug}/${id}` },
+      // Always the resource's own slug and UUID, even when the request used a legacy id or a stale slug.
+      alternates: { canonical: `${SITE_URL}${resourcePath(resource)}` },
     }
   } catch {
     return { title: 'CourseCorrect' }

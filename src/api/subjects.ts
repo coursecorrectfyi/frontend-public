@@ -1,3 +1,6 @@
+import { pathSegment, readApiError } from './errors';
+import type { RequestOptions } from './request';
+
 const baseUrl = process.env.NEXT_PUBLIC_API_URL;
 
 function getApiUrl(path: string): string {
@@ -44,18 +47,19 @@ export interface Subject {
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-export async function getSubjectBySlug(slug: string): Promise<SubjectDetail> {
+/** Throws `ApiError` on any non-2xx (404: unknown slug). */
+export async function getSubjectBySlug(slug: string, options: RequestOptions = {}): Promise<SubjectDetail> {
   if (!slug) throw new Error('Invalid slug');
-  const response = await fetch(getApiUrl(`/subjects/${slug}`));
-  if (!response.ok) throw new Error('Failed to get subject');
+  const response = await fetch(getApiUrl(`/subjects/${pathSegment(slug)}`), { headers: options.headers });
+  if (!response.ok) throw await readApiError(response, 'Failed to get subject');
   return response.json();
 }
 
-export async function getSubjects(): Promise<Subject[]> {
+export async function getSubjects(options: RequestOptions = {}): Promise<Subject[]> {
   const url = getApiUrl('/subjects');
   let response: Response;
   try {
-    response = await fetch(url);
+    response = await fetch(url, { headers: options.headers });
   } catch (err) {
     throw new Error(
       `Could not reach backend at ${url}. Is it running? (${err instanceof Error ? err.message : 'network error'})`
@@ -63,8 +67,9 @@ export async function getSubjects(): Promise<Subject[]> {
   }
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch subjects (${response.status}). Is the backend running at ${baseUrl}?`
+    throw await readApiError(
+      response,
+      `Failed to fetch subjects (${response.status}). Is the backend running at ${baseUrl}?`,
     );
   }
 

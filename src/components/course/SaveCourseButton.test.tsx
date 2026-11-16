@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { MAX_SAVED_COURSES } from '@/api/courses'
-import { makeBackendTokens, makeResource } from '@/test/fixtures'
+import { limitResponse, makeBackendTokens, makeRateLimited, makeResource } from '@/test/fixtures'
 import { firebase } from '@/test/mocks/firebase'
 import { mockSignedIn, nextAuth } from '@/test/mocks/next-auth'
 import { createGate, mockApi } from '@/test/msw'
@@ -79,11 +79,20 @@ describe('SaveCourseButton', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Add to shortlist' }))
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Failed to save item')
+    expect(alert).toHaveTextContent("This item is no longer available, so it can't be saved.")
     await user.click(document.body) // clicking elsewhere keeps it
     expect(screen.getByRole('alert')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
+
+  it("shows the backend's message when saving is rate limited", async () => {
+    mockSignedIn()
+    mockApi('get', '/api/v1/saved', { data: [] })
+    mockApi('post', '/api/v1/saved/:id', () => limitResponse(makeRateLimited()))
+    const { user } = render()
+    await user.click(await screen.findByRole('button', { name: 'Add to shortlist' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many requests. Please wait a moment and try again.')
   })
 
   it(`explains the ${MAX_SAVED_COURSES}-item limit`, async () => {

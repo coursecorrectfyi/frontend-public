@@ -1,6 +1,8 @@
 'use client';
 
 import type { LearningResource, ResourceFilters } from '@/types/resource';
+import { isInvalidCursor } from '@/api/resources';
+import QueryErrorAlert from '@/components/QueryErrorAlert';
 import { flattenPages } from '@/hooks/use-search-resources';
 import { trackSearchResultsLoaded, trackSearchError } from '@/utils/analytics';
 import CloseOutlined from '@mui/icons-material/CloseOutlined';
@@ -16,6 +18,10 @@ import type { ResourceSearchResponse } from '@/types/resource';
 import { FilterGroup } from '../filters/FilterGroup';
 import { SearchableFilterGroup } from '../filters/SearchableFilterGroup';
 import ResourceCard from './ResourceCard';
+
+export const SEARCH_FAILED = 'Something went wrong. Try refreshing, or search again.';
+export const LOAD_MORE_FAILED = "Couldn't load more results.";
+export const RESULTS_CHANGED = 'These results have changed since they were loaded.';
 
 // ── Filter options ────────────────────────────────────────────────────────────
 
@@ -117,7 +123,7 @@ export default function ResourceList({
   enrollSource = 'search_results',
   trackSearchOutcome = false,
 }: ResourceListProps) {
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, error } = queryResult;
+  const { data, isLoading, isFetchingNextPage, isRefetching, isFetchNextPageError, hasNextPage, fetchNextPage, refetch, error } = queryResult;
   const resources: LearningResource[] = flattenPages(data ?? undefined);
 
   // Track search_results_loaded / search_error once per distinct query.
@@ -191,13 +197,15 @@ export default function ResourceList({
     );
   }
 
-  if (error) {
+  // Nothing to show: the search itself failed. (With results already shown, see "Load more" below: they stay, B9.)
+  if (error && resources.length === 0) {
     return (
       <Box p={3}>
-        <Alert severity="error">Something went wrong. Try refreshing, or search again.</Alert>
+        <QueryErrorAlert error={error} fallback={SEARCH_FAILED} onRetry={() => void refetch()} />
       </Box>
     );
   }
+  const moreError = error && resources.length > 0 ? error : null;
 
   // ── Toolbar ─────────────────────────────────────────────────────────────────
   const toolbar = (
@@ -378,8 +386,21 @@ export default function ResourceList({
 
           {/* Load more */}
           <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-            {isFetchingNextPage ? (
+            {isFetchingNextPage || isRefetching ? (
               <CircularProgress size={28} />
+            ) : moreError && isInvalidCursor(moreError) ? (
+              <Alert
+                severity="info"
+                action={<Button color="inherit" size="small" onClick={() => void refetch()}>Reload results</Button>}
+              >
+                {RESULTS_CHANGED}
+              </Alert>
+            ) : moreError ? (
+              <QueryErrorAlert
+                error={moreError}
+                fallback={LOAD_MORE_FAILED}
+                onRetry={() => void (isFetchNextPageError ? fetchNextPage() : refetch())}
+              />
             ) : hasNextPage ? (
               <Button variant="outlined" onClick={() => fetchNextPage()}>
                 Load more

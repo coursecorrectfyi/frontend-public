@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { allowConsole } from '@/test/console'
 import { HttpResponse, http, type RecordedRequest, server } from '@/test/msw'
+import { MAX_REDIRECTS } from './constants'
 import { DELETE, GET, OPTIONS, PATCH, POST, PUT } from './route'
 
 // The /blog reverse proxy forwards to a WordPress host (NEXT_PUBLIC_HOSTINGER_IP) over plain HTTP.
@@ -57,7 +58,9 @@ describe('configuration', () => {
     allowConsole('error', 'NEXT_PUBLIC_HOSTINGER_IP is not set')
     const res = await proxy('/blog/post')
     expect(res.status).toBe(500)
-    expect(await res.json()).toEqual({ error: 'Blog proxy configuration error' })
+    const body = await res.text()
+    expect(JSON.parse(body)).toEqual({ error: 'The blog is not available right now.' })
+    expect(body).not.toMatch(/wordpress|proxy|HOSTINGER/i) // nothing about how the blog is served
   })
 })
 
@@ -237,15 +240,15 @@ describe('redirects', () => {
 })
 
 describe('errors and input validation', () => {
-  it('answers 502 with details when WordPress is unreachable', async () => {
+  it('answers 502 without revealing the WordPress origin when it is unreachable', async () => {
     allowConsole('error', '[Blog Proxy] Error')
     server.use(http.all(`${WP}/*`, () => HttpResponse.error()))
     const res = await proxy('/blog/post')
     expect(res.status).toBe(502)
-    expect(await res.json()).toMatchObject({
-      error: 'Failed to proxy to WordPress',
-      attemptedUrl: `${WP}/blog/post`,
-    })
+    const body = await res.text()
+    expect(JSON.parse(body)).toEqual({ error: 'Failed to load the blog. Please try again later.' })
+    expect(body).not.toContain(WP_IP) // the origin's address (and error details) go to the server log only
+    expect(body).not.toMatch(/wordpress|proxy/i) // nor what serves the blog
   })
 
   it('rejects paths that embed a URL scheme', async () => {
@@ -263,7 +266,7 @@ describe('errors and input validation', () => {
   })
 
   it('rejects paths outside /blog (the route is only mounted there, this guards misuse)', async () => {
-    allowConsole('error', '[Blog Proxy] Path does not start with /blog')
+    allowConsole('error', '[Blog Proxy] Rejected path')
     const request = new NextRequest('https://coursecorrect.fyi/wp-admin/', { headers: { host: 'coursecorrect.fyi' } })
     const res = await GET(request, { params: Promise.resolve({}) })
     expect(res.status).toBe(400)
@@ -277,38 +280,81 @@ describe('errors and input validation', () => {
   })
 })
 
-// ── Known bugs ────────────────────────────────────────────────────────────────
+// ── Safety (B10, B11, B12) ──────────────────────────────────────────────────────
 
-describe('known bugs', () => {
-  it.fails('KNOWN BUG (B10): forwards percent-encoded paths unchanged (non-Latin slugs, spaces)', async () => {
-    allowConsole('error', '[Blog Proxy] Error') // today: decoded path → ERR_UNESCAPED_CHARACTERS → 502
+describe('path, redirect and cookie safety', () => {
+  it('forwards percent-encoded paths unchanged (non-Latin slugs, spaces)', async () => {
     const calls = wordpress()
     const res = await proxy('/blog/%E6%97%A5%E6%9C%AC-post')
     expect(res.status).toBe(200)
     expect(calls.map(c => c.url.pathname)).toEqual(['/blog/%E6%97%A5%E6%9C%AC-post'])
+    await proxy('/blog/my%20post')
+    expect(calls[1].url.pathname).toBe('/blog/my%20post')
   })
 
-  it.fails('KNOWN BUG (B10): cannot be used to reach WordPress paths outside /blog via an encoded "../"', async () => {
-    // `%2e%2e` is already normalised by the URL parser, but `..%2F` reaches the route and is decoded
-    // into a real "../", which WordPress then resolves to /wp-login.php.
+  it('cannot be used to reach WordPress paths outside /blog via an encoded "../"', async () => {
+    // `%2e%2e` is already normalised by the URL parser, but `..%2F` reaches the route; decoded, it would become a
+    // real "../", which WordPress then resolves to /wp-login.php.
+    allowConsole('error', '[Blog Proxy] Rejected path')
     const calls = wordpress()
-    await proxy('/blog/..%2Fwp-login.php')
-    // Rejecting the request (no upstream call) is fine too.
-    const outsideBlog = calls.map(c => c.url.pathname).filter(path => !path.startsWith('/blog/'))
-    expect(outsideBlog).toEqual([])
+    const res = await proxy('/blog/..%2Fwp-login.php')
+    expect(res.status).toBe(400)
+    expect(calls).toEqual([]) // rejected before any upstream call
   })
 
-  it.fails('KNOWN BUG (B11): stops following a redirect loop', async () => {
+  it.each([
+    ['an encoded slash', '/blog/a%2fb'],
+    ['an encoded backslash', '/blog/..%5Cwp-login.php'],
+    ['an encoded backslash (lower case)', '/blog/x%5c..%5cwp-admin'],
+    ['malformed percent-encoding', '/blog/%E6%97'],
+  ])('rejects %s without contacting WordPress', async (_label, path) => {
+    allowConsole('error', '[Blog Proxy] Rejected path')
+    const calls = wordpress()
+    const res = await proxy(path)
+    expect(res.status).toBe(400)
+    expect(calls).toEqual([])
+  })
+
+  it.each(['/blog/../wp-login.php', '/blog/./x/../../wp-admin/', '/blog/%2e%2e/wp-login.php'])(
+    'rejects the dot segments in %s, should a proxy in front ever pass them through unresolved',
+    async pathname => {
+      // The URL parser resolves dot segments before the route sees them, so fake a request that kept them.
+      allowConsole('error', '[Blog Proxy] Rejected path')
+      const calls = wordpress()
+      const request = new NextRequest('https://coursecorrect.fyi/blog/x', { headers: { host: 'coursecorrect.fyi' } })
+      Object.defineProperty(request, 'nextUrl', { value: { pathname, search: '' } })
+      const res = await GET(request, { params: Promise.resolve({ slug: ['x'] }) })
+      expect(res.status).toBe(400)
+      expect(calls).toEqual([])
+    },
+  )
+
+  it('stops following a redirect loop and hands the redirect to the browser', async () => {
     const calls = wordpress(() =>
       calls.length > 25
         ? new HttpResponse('escaped the loop') // safety valve so the test itself terminates
         : new HttpResponse(null, { status: 301, headers: { Location: 'https://coursecorrect.fyi/blog/loop/' } }),
     )
-    await proxy('/blog/loop')
-    expect(calls.length).toBeLessThanOrEqual(10)
+    const res = await proxy('/blog/loop')
+    expect(calls).toHaveLength(1 + MAX_REDIRECTS)
+    expect(res.status).toBe(301)
+    expect(res.headers.get('location')).toBe('https://coursecorrect.fyi/blog/loop/')
   })
 
-  it.fails('KNOWN BUG (B11): handles a relative Location header instead of crashing and hanging', async () => {
+  it(`follows a chain of exactly ${MAX_REDIRECTS} redirects to the final page`, async () => {
+    const calls = wordpress(request => {
+      const hop = Number(new URL(request.url).pathname.match(/\/blog\/hop-(\d+)/)?.[1] ?? 0)
+      return hop < MAX_REDIRECTS
+        ? new HttpResponse(null, { status: 302, headers: { Location: `https://coursecorrect.fyi/blog/hop-${hop + 1}` } })
+        : new HttpResponse('final', { headers: { 'Content-Type': 'text/html' } })
+    })
+    const res = await proxy('/blog/hop-0')
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('final')
+    expect(calls).toHaveLength(1 + MAX_REDIRECTS)
+  })
+
+  it('handles a relative Location header instead of crashing and hanging', async () => {
     // MSW delivers socket events asynchronously, so the proxy's exception would escape as an uncaught error
     // and abort the test run. This fake emits synchronously, so the exception can be captured.
     const thrown: unknown[] = []
@@ -343,7 +389,7 @@ describe('known bugs', () => {
     expect(outcome).toBe('200 new post')
   })
 
-  it.fails('KNOWN BUG (B12): forwards every Set-Cookie header, not only the first', async () => {
+  it('forwards every Set-Cookie header, not only the first', async () => {
     wordpress(() => {
       const headers = new Headers({ 'Content-Type': 'text/html' })
       headers.append('Set-Cookie', 'a=1; Path=/')

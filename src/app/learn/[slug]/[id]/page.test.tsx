@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { LearningResourceDetail } from '@/types/resource'
-import { makeResourceDetail } from '@/test/fixtures'
+import { limitResponse, makeRateLimited, makeResourceDetail } from '@/test/fixtures'
 import { router } from '@/test/mocks/next-navigation'
 import { delay, mockApi } from '@/test/msw'
 import { allowKnownPageWarnings, expectMainLayout, iconButton, renderPage } from '@/test/pages'
@@ -146,10 +146,23 @@ describe('resource detail page', () => {
     expect(screen.queryByRole('heading', { name: 'What learners say' })).toBeNull()
   })
 
-  it('shows an error when the resource cannot be loaded', async () => {
+  it('says a resource that does not exist was not found, without a pointless retry', async () => {
     mockApi('get', '/api/v1/resources/:id', { error: 'Not found' }, { status: 404 })
     await renderLearn()
-    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to fetch resource')
+    expect(await screen.findByRole('alert')).toHaveTextContent("We couldn't find this course. It may no longer be available.")
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it("offers to try again after a temporary failure, with the backend's message when rate limited", async () => {
+    let attempt = 0
+    const resource = makeResourceDetail({ title: 'Python for Everybody' })
+    mockApi('get', '/api/v1/resources/:id', () =>
+      ++attempt === 1 ? limitResponse(makeRateLimited({ retryAfter: 60 })) : Response.json(resource),
+    )
+    const { user } = await renderLearn(SLUG, resource.id)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many requests. Please wait a moment and try again.')
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Python for Everybody' })).toBeInTheDocument()
   })
 
   it('replaces a legacy id or stale slug in the URL with the canonical one', async () => {

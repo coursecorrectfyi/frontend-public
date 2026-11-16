@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { makeResource } from '@/test/fixtures'
+import { limitResponse, makeRateLimited, makeResource } from '@/test/fixtures'
 import { mockApi } from '@/test/msw'
 import {
   addCourseToShortlist,
+  ERR_ITEM_UNAVAILABLE,
   ERR_NO_AUTH_TOKEN,
   ERR_PERMISSION_DENIED,
   ERR_SESSION_EXPIRED,
@@ -46,6 +47,16 @@ describe('getSavedCourses', () => {
   ])('turns HTTP %i into a readable message', async (status, message) => {
     mockApi('get', '/api/v1/saved', { error: 'x' }, { status })
     await expect(getSavedCourses('tok')).rejects.toThrow(message)
+    await expect(getSavedCourses('tok')).rejects.toMatchObject({ name: 'ApiError', status })
+  })
+
+  it('passes on the backend message when rate limited', async () => {
+    mockApi('get', '/api/v1/saved', () => limitResponse(makeRateLimited({ retryAfter: 1 })))
+    await expect(getSavedCourses('tok')).rejects.toMatchObject({
+      status: 429,
+      retryAfter: 1,
+      message: 'Too many requests. Please wait a moment and try again.',
+    })
   })
 })
 
@@ -63,9 +74,31 @@ describe('addCourseToShortlist', () => {
     expect(calls[0].url.pathname).toBe('/api/v1/saved/a%2Fb%3Fc')
   })
 
-  it('rejects when the resource does not exist (404)', async () => {
+  it('explains a resource that no longer exists (404)', async () => {
     mockApi('post', '/api/v1/saved/:id', { error: 'Resource not found' }, { status: 404 })
-    await expect(addCourseToShortlist('tok', 'x')).rejects.toThrow('Failed to save item')
+    await expect(addCourseToShortlist('tok', 'x')).rejects.toThrow(ERR_ITEM_UNAVAILABLE)
+    await expect(addCourseToShortlist('tok', 'x')).rejects.toMatchObject({ status: 404, serverError: 'Resource not found' })
+  })
+
+  it.each([
+    ['save', () => addCourseToShortlist('tok', 'x'), 'post'],
+    ['remove', () => removeCourseFromShortlist('tok', 'x'), 'delete'],
+  ] as const)('says the session expired when %s is unauthorised (401)', async (_label, call, method) => {
+    mockApi(method, '/api/v1/saved/:id', { error: 'Invalid or expired token' }, { status: 401 })
+    await expect(call()).rejects.toThrow(ERR_SESSION_EXPIRED)
+  })
+
+  it.each([
+    ['save', () => addCourseToShortlist('tok', 'x'), 'post'],
+    ['remove', () => removeCourseFromShortlist('tok', 'x'), 'delete'],
+  ] as const)("passes on the backend's message when %s is rate limited (429)", async (_label, call, method) => {
+    mockApi(method, '/api/v1/saved/:id', () => limitResponse(makeRateLimited()))
+    await expect(call()).rejects.toMatchObject({ status: 429, message: 'Too many requests. Please wait a moment and try again.' })
+  })
+
+  it.each(['.', '..'])('refuses the id %j without calling the API', async id => {
+    await expect(addCourseToShortlist('tok', id)).rejects.toThrow('Invalid path segment')
+    await expect(removeCourseFromShortlist('tok', id)).rejects.toThrow('Invalid path segment')
   })
 
   it('refuses to call the API without a token', async () => {
@@ -85,6 +118,12 @@ describe('removeCourseFromShortlist', () => {
   it('rejects on a server error', async () => {
     mockApi('delete', '/api/v1/saved/:id', { error: 'x' }, { status: 500 })
     await expect(removeCourseFromShortlist('tok', 'x')).rejects.toThrow('Failed to remove item')
+  })
+
+  it('URL-encodes the id', async () => {
+    const calls = mockApi('delete', '/api/v1/saved/:id', { ok: true })
+    await removeCourseFromShortlist('tok', 'a/b?c')
+    expect(calls[0].url.pathname).toBe('/api/v1/saved/a%2Fb%3Fc')
   })
 
   it('refuses to call the API without a token', async () => {

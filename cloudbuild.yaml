@@ -66,8 +66,10 @@ steps:
       - "--cpu-boost"
       - "--set-env-vars"
       - "NODE_ENV=production,NEXTAUTH_URL=${_NEXTAUTH_URL}"
+      # Runtime secrets from Secret Manager. API_RELAY_SECRET must never be a build arg or a NEXT_PUBLIC_* value:
+      # it would end up in the image or the browser bundle (see src/lib/server/relay.ts, docs/deployment-gcp.md).
       - "--set-secrets"
-      - "NEXTAUTH_SECRET=${_NEXTAUTH_SECRET_NAME}:latest"
+      - "NEXTAUTH_SECRET=${_NEXTAUTH_SECRET_NAME}:latest,API_RELAY_SECRET=${_API_RELAY_SECRET_NAME}:latest"
 
 images:
   - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$_TAG"
@@ -82,6 +84,8 @@ substitutions:
   _SERVICE_NAME: cc-frontend
   _MAX_INSTANCES: "3"
   _NEXTAUTH_SECRET_NAME: nextauth-secret
+  # Secret Manager secret holding the relay secret shared with the backend (its TRUSTED_RELAY_SECRETS).
+  _API_RELAY_SECRET_NAME: api-relay-secret
   _NEXTAUTH_URL: https://example.com
   _NEXT_PUBLIC_API_URL: https://your-backend.example.com
   _NEXT_PUBLIC_GTM_ID: GTM-XXXXXXX

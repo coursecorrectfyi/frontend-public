@@ -28,7 +28,7 @@ export default function SearchContent() {
 
   const {
     messages, isTyping, handleSendMessage, resetChat,
-    isLimitReached, messageCount,
+    isLimitReached, limit, notice, dismissNotice, messageCount,
   } = useChatState({ pageContextIds: resourceIds, contextKey: `search:${searchQuery.toLowerCase()}` });
 
   const DEFAULT_CHAT_MESSAGE = {
@@ -49,6 +49,9 @@ export default function SearchContent() {
       isTyping={isTyping}
       resetChat={resetChat}
       isLimitReached={isLimitReached}
+      limit={limit}
+      notice={notice}
+      onDismissNotice={dismissNotice}
       messageCount={messageCount}
       currentPage={CurrentPage.SEARCH_RESULT}
       searchTerm={searchQuery}

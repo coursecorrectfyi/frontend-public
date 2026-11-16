@@ -43,6 +43,35 @@ export function startServer() {
   })
 }
 
+/**
+ * Gives each test a fresh connection pool for Node's fetch (undici), the way handlers are reset per test.
+ *
+ * Why: MSW mocks the sockets underneath Node's fetch. When a test aborts a request, the mocked socket reports
+ * "closed" a moment later. undici's per-origin connection manager then fails whatever request it is running at
+ * that moment — under load, a request of a later, unrelated test (`TypeError: fetch failed`, caused by
+ * `SocketError: closed`, bytesWritten 0). With a new pool per test, that late event reaches a discarded pool.
+ *
+ * Node creates its global dispatcher lazily, on the first request, and doesn't export the class, so the first
+ * call makes one mocked warm-up request to get it. src/test/harness.test.tsx checks the effect.
+ */
+const DISPATCHER = Symbol.for('undici.globalDispatcher.1')
+const WARM_UP_URL = 'http://harness.test/warm-up'
+
+type Dispatcher = { constructor: new () => Dispatcher; destroy?: () => Promise<void> }
+
+export async function freshConnectionPool() {
+  const slot = globalThis as unknown as Record<symbol, Dispatcher | undefined>
+  if (!slot[DISPATCHER]) {
+    server.use(http.get(WARM_UP_URL, () => new Response('ok')))
+    await (await fetch(WARM_UP_URL)).text()
+    server.resetHandlers()
+  }
+  const previous = slot[DISPATCHER]
+  if (!previous) throw new Error('Node fetch dispatcher not found: freshConnectionPool() in src/test/msw.ts needs updating')
+  slot[DISPATCHER] = new previous.constructor()
+  await previous.destroy?.().catch(() => {})
+}
+
 /** Returns and clears the requests that had no handler since the last call. */
 export function takeUnhandledRequests(): string[] {
   return unhandledRequests.splice(0)

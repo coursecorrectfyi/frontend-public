@@ -4,18 +4,21 @@ import BookmarkBorder from '@mui/icons-material/BookmarkBorder';
 import Google from '@mui/icons-material/Google';
 import Logout from '@mui/icons-material/Logout';
 import { Avatar, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Tooltip } from '@mui/material';
-import { signIn, signOut, useSession } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import SignInErrorSnackbar from '@/components/auth/SignInErrorSnackbar';
+import { useAuth } from '@/hooks/use-auth';
 import { useFirebaseSignIn } from '@/hooks/use-firebase-sign-in';
 import { signOutFirebase } from '@/lib/firebase';
 
 export default function AuthButton() {
   const { data: session } = useSession();
+  const { isSignedIn } = useAuth();
   const router = useRouter();
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const { signInWithFirebase, signingIn } = useFirebaseSignIn();
+  const { signInWithFirebase, signingIn, error: signInError, clearError } = useFirebaseSignIn();
   const open = Boolean(anchorEl);
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -27,39 +30,41 @@ export default function AuthButton() {
   };
 
   const handleSavedCourses = () => {
-    router.push('/saved-courses');
+    router.push('/saved');
     handleClose();
   };
 
 
   const handleSignOut = async () => {
-    const isFirebaseUser = session?.backendTokens?.user?.provider === 'firebase';
-    if (isFirebaseUser) {
-      try {
-        await signOutFirebase();
-      } catch (e) {
-        console.error('Firebase signOut:', e);
-      }
+    // Every session starts with a Firebase sign-in (user.provider is the sign-in method, e.g. "google", not
+    // "firebase"), so always end the Firebase session too.
+    try {
+      await signOutFirebase();
+    } catch (e) {
+      console.error('Firebase signOut:', e);
     }
     await signOut();
     handleClose();
   };
 
-  if (!session) {
+  if (!isSignedIn) {
     return (
-      <Tooltip title={signingIn ? 'Signing in…' : 'Sign In'}>
-        <span>
-          <IconButton
-            color='primary'
-            onClick={signInWithFirebase}
-            size="small"
-            disableTouchRipple
-            disabled={signingIn}
-          >
-            <Google />
-          </IconButton>
-        </span>
-      </Tooltip>
+      <>
+        <SignInErrorSnackbar error={signInError} onClose={clearError} />
+        <Tooltip title={signingIn ? 'Signing in…' : 'Sign In'}>
+          <span>
+            <IconButton
+              color='primary'
+              onClick={signInWithFirebase}
+              size="small"
+              disableTouchRipple
+              disabled={signingIn}
+            >
+              <Google />
+            </IconButton>
+          </span>
+        </Tooltip>
+      </>
     );
   }
 
@@ -73,8 +78,8 @@ export default function AuthButton() {
         aria-expanded={open ? 'true' : undefined}
       >
         <Avatar
-          src={session.user?.image ?? ''}
-          alt={session.user?.name ?? ''}
+          src={session?.user?.image ?? ''}
+          alt={session?.user?.name ?? ''}
           sx={{ width: 24, height: 24 }}
         />
       </IconButton>

@@ -17,7 +17,7 @@ export default function ResourceChat({ resourceId }: ResourceChatProps) {
     timestamp: new Date()
   };
 
-  const { messages, isTyping, handleSendMessage, resetChat, isLimitReached, messageCount } = useChatState({
+  const { messages, isTyping, handleSendMessage, resetChat, isLimitReached, limit, notice, dismissNotice, messageCount } = useChatState({
     pageContextIds: resourceId ? [resourceId] : [],
     contextKey: `resource:${resourceId ?? 'unknown'}`,
   });
@@ -35,6 +35,9 @@ export default function ResourceChat({ resourceId }: ResourceChatProps) {
       isTyping={isTyping}
       resetChat={resetChat}
       isLimitReached={isLimitReached}
+      limit={limit}
+      notice={notice}
+      onDismissNotice={dismissNotice}
       messageCount={messageCount}
       currentPage={CurrentPage.COURSE_DETAIL}
     />

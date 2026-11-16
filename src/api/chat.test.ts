@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest'
+import { isDailyLimit, isRateLimited } from './errors'
+import { limitResponse, makeChatSignedInOnly, makeChatUnavailable, makeDailyLimit, makeRateLimited } from '@/test/fixtures'
 import { mockApi } from '@/test/msw'
-import { delta, done, errorEvent, sseResponse, sseResponseFromChunks } from '@/test/sse'
-import { type ChatRequest, type ChatStreamChunk, CurrentPage, sendChatMessage } from './chat'
+import { controlledSse, delta, done, errorEvent, sseResponse, sseResponseFromChunks } from '@/test/sse'
+import {
+  capHistory,
+  capPageContextIds,
+  type ChatHistoryMessage,
+  type ChatRequest,
+  type ChatStreamChunk,
+  CurrentPage,
+  MAX_HISTORY_LENGTH,
+  MAX_HISTORY_TURNS,
+  MAX_PAGE_CONTEXT_IDS,
+  MAX_TURN_LENGTH,
+  sendChatMessage,
+} from './chat'
 
 // Contract: docs/backend-api.md → "POST /api/v1/chat".
 
@@ -9,7 +23,6 @@ const SESSION_ID = '3f2b8c1e-9d4a-4e6b-8c2d-1a2b3c4d5e6f'
 
 const request = (overrides: Partial<ChatRequest> = {}): ChatRequest => ({
   message: 'Which course should I take?',
-  chatId: 'chat-1',
   pageContextIds: ['00000000-0000-4000-8000-000000000001'],
   currentPage: CurrentPage.SEARCH_RESULT,
   searchTerm: 'python',
@@ -68,6 +81,43 @@ describe('sendChatMessage: request', () => {
     const body = JSON.parse(calls[0].body)
     expect(body.pageContextIds).toEqual(['00000000-0000-4000-8000-000000000001'])
     expect(body).not.toHaveProperty('courseIds')
+  })
+
+  it('sends only fields the contract defines (no chatId)', async () => {
+    const calls = mockApi('post', '/api/v1/chat', () => sseResponse([done()]))
+    await collect(sendChatMessage(request(), null, SESSION_ID))
+    expect(Object.keys(JSON.parse(calls[0].body)).sort()).toEqual(
+      ['currentPage', 'history', 'message', 'pageContextIds', 'searchTerm'],
+    )
+  })
+
+  it('keeps the body within the contract limits, whoever the caller is', async () => {
+    const calls = mockApi('post', '/api/v1/chat', () => sseResponse([done()]))
+    const history = Array.from({ length: 30 }, (_, i): ChatHistoryMessage => ({ role: i % 2 ? 'bot' : 'user', content: `t${i}` }))
+    const ids = Array.from({ length: 60 }, (_, i) => `id-${i}`)
+    await collect(sendChatMessage(request({ history, pageContextIds: ids }), null, SESSION_ID))
+    const body = JSON.parse(calls[0].body)
+    expect(body.history).toHaveLength(MAX_HISTORY_TURNS)
+    expect(body.history[0]).toEqual({ role: 'user', content: 't10' })
+    expect(body.pageContextIds).toEqual(ids.slice(0, MAX_PAGE_CONTEXT_IDS))
+  })
+
+  it('can be cancelled: aborting stops the request and the stream', async () => {
+    let aborted = false
+    const sse = controlledSse() // driven step by step: nothing left pending after the abort
+    mockApi('post', '/api/v1/chat', req => {
+      req.signal.addEventListener('abort', () => {
+        aborted = true
+      })
+      return sse.response()
+    })
+    const controller = new AbortController()
+    const stream = sendChatMessage(request(), null, SESSION_ID, controller.signal)
+    sse.send(delta('a'))
+    expect((await stream.next()).value).toEqual({ type: 'delta', content: 'a' })
+    controller.abort()
+    await expect(stream.next()).rejects.toMatchObject({ name: 'AbortError' })
+    await expect.poll(() => aborted).toBe(true)
   })
 
   it('uses the page names the backend knows', () => {
@@ -160,7 +210,7 @@ describe('sendChatMessage: stream parsing', () => {
     ])
   })
 
-  it.fails('KNOWN BUG (B21): handles a final event that is not followed by a newline', async () => {
+  it('handles a final event that is not followed by a newline', async () => {
     mockApi('post', '/api/v1/chat', () =>
       sseResponseFromChunks(['data: {"type":"delta","content":"a"}\n\n', 'data: {"type":"done"}']),
     )
@@ -169,25 +219,117 @@ describe('sendChatMessage: stream parsing', () => {
       { type: 'done' },
     ])
   })
+
+  it('handles a last delta without a newline when the stream ends without done', async () => {
+    mockApi('post', '/api/v1/chat', () => sseResponseFromChunks(['data: {"type":"delta","content":"a"}\n\n', 'data: {"type":"delta","content":"b"}']))
+    expect(await collect(sendChatMessage(request(), null, SESSION_ID))).toEqual([
+      { type: 'delta', content: 'a' },
+      { type: 'delta', content: 'b' },
+    ])
+  })
+
+  it('handles a final event split across chunks without a trailing newline', async () => {
+    mockApi('post', '/api/v1/chat', () => sseResponseFromChunks(['data: {"type":"delta","content":"a"}\n\ndata: {"ty', 'pe":"done"}']))
+    expect(await collect(sendChatMessage(request(), null, SESSION_ID))).toEqual([
+      { type: 'delta', content: 'a' },
+      { type: 'done' },
+    ])
+  })
+})
+
+describe('capHistory', () => {
+  const turns = (n: number, content = (i: number) => `t${i}`): ChatHistoryMessage[] =>
+    Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'bot' : 'user', content: content(i) }))
+
+  it('keeps a short history as is', () => {
+    const history = turns(4)
+    expect(capHistory(history)).toEqual(history)
+    expect(capHistory([])).toEqual([])
+  })
+
+  it(`keeps the most recent ${MAX_HISTORY_TURNS} turns`, () => {
+    const capped = capHistory(turns(22))
+    expect(capped).toHaveLength(MAX_HISTORY_TURNS)
+    expect(capped.at(-1)?.content).toBe('t21')
+    expect(capped[0]).toEqual({ role: 'user', content: 't2' })
+  })
+
+  it('starts with a user turn when older turns were dropped', () => {
+    const capped = capHistory(turns(21)) // the 20 most recent start with a bot turn (t1)
+    expect(capped[0]).toEqual({ role: 'user', content: 't2' })
+    expect(capped).toHaveLength(19)
+  })
+
+  it('does not drop a leading bot turn when nothing was dropped', () => {
+    const history: ChatHistoryMessage[] = [{ role: 'bot', content: 'hi' }, { role: 'user', content: 'q' }]
+    expect(capHistory(history)).toEqual(history)
+  })
+
+  it(`cuts each turn to ${MAX_TURN_LENGTH.toLocaleString('en-US')} characters`, () => {
+    const capped = capHistory([{ role: 'user', content: 'q' }, { role: 'bot', content: 'x'.repeat(MAX_TURN_LENGTH + 5) }])
+    expect(capped[1].content).toHaveLength(MAX_TURN_LENGTH)
+    expect(capped[0].content).toBe('q')
+  })
+
+  it(`drops the oldest turns to stay within ${MAX_HISTORY_LENGTH.toLocaleString('en-US')} characters in total`, () => {
+    // 4 turns of 10,000 characters = 40,000: the oldest is dropped, then the leading bot turn.
+    const capped = capHistory(turns(4, i => String(i).repeat(10_000)))
+    expect(capped.map(t => t.content[0])).toEqual(['2', '3'])
+    expect(capped[0].role).toBe('user')
+    expect(capped.reduce((n, t) => n + t.content.length, 0)).toBeLessThanOrEqual(MAX_HISTORY_LENGTH)
+  })
+
+  it('keeps exactly the total limit', () => {
+    const capped = capHistory(turns(4, () => 'x'.repeat(MAX_HISTORY_LENGTH / 4)))
+    expect(capped).toHaveLength(4)
+  })
+})
+
+describe('capPageContextIds', () => {
+  it(`keeps the first ${MAX_PAGE_CONTEXT_IDS} distinct, non-empty ids, in order`, () => {
+    const ids = ['a', 'b', 'a', '', ' ', ...Array.from({ length: 60 }, (_, i) => `r${i}`)]
+    const capped = capPageContextIds(ids)
+    expect(capped).toHaveLength(MAX_PAGE_CONTEXT_IDS)
+    expect(capped.slice(0, 3)).toEqual(['a', 'b', 'r0'])
+    expect(new Set(capped).size).toBe(capped.length)
+  })
 })
 
 describe('sendChatMessage: errors', () => {
-  it('turns a 429 into a limit_reached chunk carrying the backend message', async () => {
-    const message = 'Too many questions from your network today. Sign in to get 10 questions per day.'
-    mockApi('post', '/api/v1/chat', { limitReached: true, message }, { status: 429, headers: { 'Retry-After': '3600' } })
-    expect(await collect(sendChatMessage(request(), null, SESSION_ID))).toEqual([{ type: 'limit_reached', message }])
+  it('throws a daily limit as an ApiError with the backend message, scope and wait', async () => {
+    const body = makeDailyLimit('ip')
+    mockApi('post', '/api/v1/chat', () => limitResponse(body))
+    const error = await collect(sendChatMessage(request(), null, SESSION_ID)).catch(e => e)
+    expect(isDailyLimit(error)).toBe(true)
+    expect(error).toMatchObject({ status: 429, code: 'daily_limit', scope: 'ip', message: body.message, retryAfter: body.retryAfter })
   })
 
-  it('falls back to a generic limit message when the 429 body is not JSON or has no message', async () => {
-    mockApi('post', '/api/v1/chat', () => new Response('Too Many Requests', { status: 429 }))
-    expect(await collect(sendChatMessage(request(), null, SESSION_ID))).toEqual([
-      { type: 'limit_reached', message: 'Daily limit reached.' },
-    ])
+  it('throws a per-minute rate limit as a temporary ApiError, not a daily limit', async () => {
+    mockApi('post', '/api/v1/chat', () => limitResponse(makeRateLimited({ retryAfter: 4 })))
+    const error = await collect(sendChatMessage(request(), null, SESSION_ID)).catch(e => e)
+    expect(isRateLimited(error)).toBe(true)
+    expect(isDailyLimit(error)).toBe(false)
+    expect(error).toMatchObject({ status: 429, retryAfter: 4, message: 'Too many requests. Please wait a moment and try again.' })
+  })
 
+  it('gives a 429 without a usable body a readable message (and treats it as temporary)', async () => {
+    mockApi('post', '/api/v1/chat', () => new Response('Too Many Requests', { status: 429, headers: { 'Retry-After': '2' } }))
+    const error = await collect(sendChatMessage(request(), null, SESSION_ID)).catch(e => e)
+    expect(isRateLimited(error)).toBe(true)
+    expect(error).toMatchObject({ retryAfter: 2, message: 'Too many requests. Please wait a moment and try again.' })
+  })
+
+  it('treats an old-style 429 ({ limitReached: true }, no code) as a daily limit', async () => {
     mockApi('post', '/api/v1/chat', { limitReached: true }, { status: 429 })
-    expect(await collect(sendChatMessage(request(), null, SESSION_ID))).toEqual([
-      { type: 'limit_reached', message: 'Daily limit reached.' },
-    ])
+    expect(isDailyLimit(await collect(sendChatMessage(request(), null, SESSION_ID)).catch(e => e))).toBe(true)
+  })
+
+  it('gives a 503 without a message a readable one', async () => {
+    mockApi('post', '/api/v1/chat', { error: 'Service Unavailable' }, { status: 503 })
+    await expect(collect(sendChatMessage(request(), null, SESSION_ID))).rejects.toMatchObject({
+      status: 503,
+      message: 'Cora is unavailable right now. Please try again later.',
+    })
   })
 
   it.each([401, 500, 502])('throws on HTTP %i', async status => {
@@ -195,6 +337,28 @@ describe('sendChatMessage: errors', () => {
     await expect(collect(sendChatMessage(request(), null, SESSION_ID))).rejects.toThrow(
       `Chat request failed: ${status}`,
     )
+  })
+
+  it.each([
+    ['chat_unavailable', makeChatUnavailable()],
+    ['chat_signed_in_only', makeChatSignedInOnly()],
+  ])('throws an ApiError with the code and the user-facing message for a 503 %s', async (code, body) => {
+    mockApi('post', '/api/v1/chat', body, { status: 503 })
+    await expect(collect(sendChatMessage(request(), null, SESSION_ID))).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 503,
+      code,
+      message: body.message,
+    })
+  })
+
+  it('throws an ApiError that keeps the backend error and maxLength for a 400', async () => {
+    mockApi('post', '/api/v1/chat', { error: 'message must be at most 4000 characters', maxLength: 4000 }, { status: 400 })
+    await expect(collect(sendChatMessage(request(), null, SESSION_ID))).rejects.toMatchObject({
+      status: 400,
+      serverError: 'message must be at most 4000 characters',
+      maxLength: 4000,
+    })
   })
 
   it('yields nothing for a 200 with an empty body (fetch gives an empty stream, not a null body)', async () => {
@@ -208,7 +372,7 @@ describe('sendChatMessage: errors', () => {
   })
 
   // Contract: docs/backend-api.md → "POST /api/v1/chat", Responses: show `error` on 400.
-  it.fails('KNOWN BUG (C2): surfaces the backend message for a 400 (e.g. message too long)', async () => {
+  it('surfaces the backend message for a 400 (e.g. message too long)', async () => {
     mockApi(
       'post',
       '/api/v1/chat',
@@ -220,7 +384,7 @@ describe('sendChatMessage: errors', () => {
     )
   })
 
-  it.fails('KNOWN BUG (C2): surfaces a readable message for a 413 (request body too large)', async () => {
+  it('surfaces a readable message for a 413 (request body too large)', async () => {
     mockApi('post', '/api/v1/chat', { error: 'Request body too large', maxBytes: 524288 }, { status: 413 })
     expect(await outcome(sendChatMessage(request(), null, SESSION_ID))).toMatch(/too large|too long/i)
   })

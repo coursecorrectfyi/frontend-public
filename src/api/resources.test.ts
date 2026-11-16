@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { makeResourceDetail, makeSearchResponse } from '@/test/fixtures'
+import { limitResponse, makeRateLimited, makeResourceDetail, makeSearchResponse } from '@/test/fixtures'
 import { HttpResponse, http, mockApi, server } from '@/test/msw'
+import { ApiError } from './errors'
 import { getResourceById, searchResources } from './resources'
 
 // Contract: docs/backend-api.md → "GET /api/v1/resources/search" and "GET /api/v1/resources/:id".
@@ -71,6 +72,28 @@ describe('searchResources', () => {
     mockApi('get', '/api/v1/resources/search', { error: 'nope' }, { status })
     await expect(searchResources('x')).rejects.toThrow('Search request failed')
   })
+
+  it('rejects with an ApiError carrying the status and the backend error (e.g. an invalid cursor)', async () => {
+    mockApi('get', '/api/v1/resources/search', { error: 'Invalid cursor' }, { status: 400 })
+    await expect(searchResources('x', undefined, 'stale')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 400,
+      serverError: 'Invalid cursor',
+      message: 'Search request failed',
+    })
+  })
+
+  it('rejects a rate-limited search with the backend message and the wait time', async () => {
+    mockApi('get', '/api/v1/resources/search', () => limitResponse(makeRateLimited({ retryAfter: 2 })))
+    const error = await searchResources('x').catch(e => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({
+      status: 429,
+      code: 'rate_limited',
+      retryAfter: 2,
+      message: 'Too many requests. Please wait a moment and try again.',
+    })
+  })
 })
 
 describe('getResourceById', () => {
@@ -85,9 +108,15 @@ describe('getResourceById', () => {
   it('rejects on 404 (unknown, malformed or inactive id)', async () => {
     mockApi('get', '/api/v1/resources/:id', { error: 'Not found' }, { status: 404 })
     await expect(getResourceById('nope')).rejects.toThrow('Failed to fetch resource')
+    await expect(getResourceById('nope')).rejects.toMatchObject({ name: 'ApiError', status: 404 })
   })
 
-  it.fails('KNOWN BUG (B13): URL-encodes the id so it cannot address another endpoint', async () => {
+  it.each(['.', '..'])('refuses the id %j without calling the API (it would resolve to another path)', async id => {
+    // No handler registered: a request would fail the test.
+    await expect(getResourceById(id)).rejects.toThrow('Invalid path segment')
+  })
+
+  it('URL-encodes the id so it cannot address another endpoint', async () => {
     // The id comes from the page URL (/learn/:slug/:id). Unencoded, "../saved" is resolved by the URL parser
     // and the request goes to GET /api/v1/saved instead.
     const paths: string[] = []

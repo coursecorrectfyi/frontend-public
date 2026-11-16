@@ -2,12 +2,21 @@
 import type { Account, Session, User } from 'next-auth'
 import type { JWT } from 'next-auth/jwt'
 import type { CredentialsConfig } from 'next-auth/providers/credentials'
+import { headers } from 'next/headers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BackendTokens } from '@/types/next-auth'
 import { allowConsole } from '@/test/console'
-import { makeBackendTokens } from '@/test/fixtures'
+import { limitResponse, makeBackendTokens, makeRateLimited } from '@/test/fixtures'
 import { HttpResponse, http, mockApi, server } from '@/test/msw'
 import { authOptions, isValidBackendTokens, isValidRefreshResponse } from './auth-options'
+
+vi.mock('next/headers', () => ({ headers: vi.fn() }))
+
+/** The NextAuth request comes from 203.0.113.7 and the relay secret is configured. */
+function visitorRequest() {
+  vi.stubEnv('API_RELAY_SECRET', 'relay-secret')
+  vi.mocked(headers).mockResolvedValue(new Headers({ 'x-forwarded-for': '203.0.113.7' }) as never)
+}
 
 const NOW = new Date('2026-03-01T12:00:00.000Z').getTime()
 const HOUR = 60 * 60 * 1000
@@ -194,6 +203,15 @@ describe('jwt callback', () => {
       expect(token.backendTokens).toEqual({ ...old, ...refreshed })
     })
 
+    it('refreshes on behalf of the visitor (relay headers)', async () => {
+      visitorRequest()
+      const calls = mockApi('post', '/api/v1/auth/refresh', refreshed)
+      await jwt({ token: { backendTokens: makeBackendTokens({ tokenExpires: NOW - 1 }) } })
+      expect(calls[0].headers.get('x-relay-secret')).toBe('relay-secret')
+      expect(calls[0].headers.get('x-visitor-ip')).toBe('203.0.113.7')
+      expect(calls[0].headers.get('authorization')).toMatch(/^Bearer /) // still there
+    })
+
     it('does not refresh while the access token has more than 60 seconds left', async () => {
       const old = makeBackendTokens({ tokenExpires: NOW + 61_000 })
       await expect(jwt({ token: { backendTokens: old } })).resolves.toEqual({ backendTokens: old })
@@ -214,22 +232,63 @@ describe('jwt callback', () => {
       expect(token.backendTokens).toEqual(full)
     })
 
-    it('drops the backend tokens when the refresh request cannot be made (network error)', async () => {
-      allowConsole('error', 'Failed to refresh token')
+    // Contract ("Conventions"): "Treat every 5xx as a temporary server problem, never as a reason to sign the user
+    // out." The same goes for a rate limit (429) and an unreachable backend: the tokens stay, and the next session
+    // read tries again. (An earlier version dropped them on a network error.)
+    it('keeps the backend tokens when the refresh request cannot be made (network error)', async () => {
+      allowConsole('warn', 'Token refresh: backend unreachable')
       server.use(http.post('http://api.test/api/v1/auth/refresh', () => HttpResponse.error()))
-      const token = await jwt({ token: { backendTokens: makeBackendTokens({ tokenExpires: NOW - 1 }) } })
-      expect(token.backendTokens).toBeUndefined()
+      const old = makeBackendTokens({ tokenExpires: NOW - 1 })
+      const token = await jwt({ token: { backendTokens: old } })
+      expect(token.backendTokens).toEqual(old)
+    })
+
+    it.each<[string, () => Response]>([
+      ['500 "Server configuration error"', () => Response.json({ error: 'Server configuration error' }, { status: 500 })],
+      ['502 with an HTML page', () => new Response('<html>Bad gateway</html>', { status: 502 })],
+      ['503 with no body', () => new Response(null, { status: 503 })],
+      ['429 rate limit', () => limitResponse(makeRateLimited())],
+    ])('keeps the backend tokens on a temporary failure: %s', async (_label, respond) => {
+      allowConsole('warn', 'Token refresh: HTTP')
+      const calls = mockApi('post', '/api/v1/auth/refresh', respond)
+      const old = makeBackendTokens({ tokenExpires: NOW - 1 })
+      const token = await jwt({ token: { backendTokens: old } })
+      expect(token.backendTokens).toEqual(old)
+      expect(calls).toHaveLength(1)
+    })
+
+    it('tries again on the next session read after a temporary failure', async () => {
+      allowConsole('warn', 'Token refresh: HTTP')
+      let attempt = 0
+      mockApi('post', '/api/v1/auth/refresh', () =>
+        ++attempt === 1 ? new Response(null, { status: 503 }) : Response.json(refreshed),
+      )
+      const first = await jwt({ token: { backendTokens: makeBackendTokens({ tokenExpires: NOW - 1 }) } })
+      const second = await jwt({ token: first })
+      expect(second.backendTokens?.token).toBe('new-access')
     })
 
     // The refresh token lasts 7 days; after that the backend answers 401 and the user must sign in again.
-    it.fails('KNOWN BUG (B1): drops the backend tokens when the refresh is rejected (401)', async () => {
-      mockApi('post', '/api/v1/auth/refresh', { error: 'Invalid or expired token' }, { status: 401 })
+    it.each([
+      ['Invalid or expired refresh token'],
+      ['Missing Authorization header'],
+      ['Invalid token type'],
+    ])('drops the backend tokens when the refresh is rejected (401 "%s")', async error => {
+      mockApi('post', '/api/v1/auth/refresh', { error }, { status: 401 })
       const token = await jwt({ token: { backendTokens: makeBackendTokens({ tokenExpires: NOW - 1 }) } })
       expect(token.backendTokens).toBeUndefined()
     })
 
-    it.fails('KNOWN BUG (B1): drops the backend tokens when the refresh response is not usable', async () => {
+    it('drops the backend tokens when the refresh response is not usable', async () => {
+      allowConsole('error', 'Token refresh: unusable response')
       mockApi('post', '/api/v1/auth/refresh', { unexpected: true })
+      const token = await jwt({ token: { backendTokens: makeBackendTokens({ tokenExpires: NOW - 1 }) } })
+      expect(token.backendTokens).toBeUndefined()
+    })
+
+    it('drops the backend tokens when a 200 response is not JSON', async () => {
+      allowConsole('error', 'Token refresh: unusable response')
+      mockApi('post', '/api/v1/auth/refresh', () => new Response('<html>ok</html>', { status: 200 }))
       const token = await jwt({ token: { backendTokens: makeBackendTokens({ tokenExpires: NOW - 1 }) } })
       expect(token.backendTokens).toBeUndefined()
     })
@@ -245,6 +304,15 @@ describe('signOut event', () => {
     const calls = mockApi('post', '/api/v1/auth/logout', { ok: true })
     await signOut({ backendTokens: makeBackendTokens({ token: 'access' }) })
     expect(calls).toHaveLength(1)
+    expect(calls[0].headers.get('authorization')).toBe('Bearer access')
+  })
+
+  it('tells the backend on behalf of the visitor (relay headers)', async () => {
+    visitorRequest()
+    const calls = mockApi('post', '/api/v1/auth/logout', { ok: true })
+    await signOut({ backendTokens: makeBackendTokens({ token: 'access' }) })
+    expect(calls[0].headers.get('x-relay-secret')).toBe('relay-secret')
+    expect(calls[0].headers.get('x-visitor-ip')).toBe('203.0.113.7')
     expect(calls[0].headers.get('authorization')).toBe('Bearer access')
   })
 

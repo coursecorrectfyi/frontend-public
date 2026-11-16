@@ -1,6 +1,7 @@
 import type { BackendTokens } from '@/types/next-auth';
 import type { NextAuthOptions, User } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
+import { relayHeaders } from './server/relay';
 
 /**
  * NextAuth configuration (used by app/api/auth/[...nextauth]/route.ts).
@@ -8,6 +9,7 @@ import CredentialsProvider from 'next-auth/providers/credentials';
  * Sign-in flow: the browser signs in with Firebase (Google popup), exchanges the Firebase ID token for
  * backend tokens (POST /api/v1/auth/firebase/login), then calls signIn('firebase-backend', ...) with them.
  * The backend tokens live in the NextAuth JWT and are refreshed via POST /api/v1/auth/refresh.
+ * Refresh and logout run on this server for the visitor, so they carry the relay headers (src/lib/server/relay.ts).
  *
  * Kept out of the route file because Next.js route files may only export HTTP handlers,
  * and these callbacks need unit tests (src/lib/auth-options.test.ts).
@@ -66,37 +68,17 @@ export const authOptions: NextAuthOptions = {
         token.backendTokens = backendTokensFromUser;
       }
 
-      // Refresh the access token when it has expired (or is about to, within 60s)
+      // Refresh the access token when it has expired (or is about to, within 60s), or when the client asks for a
+      // fresh one (`update()`, see src/hooks/use-auth.ts).
       const shouldRefresh =
         token.backendTokens &&
         (trigger === "update" || Date.now() >= token.backendTokens.tokenExpires - 60_000);
 
       if (shouldRefresh) {
-        try {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/refresh`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token.backendTokens!.refreshToken}`,
-              'Content-Type': 'application/json',
-            },
-          });
-
-          const tokens = await response.json();
-          if (isValidBackendTokens(tokens)) {
-            token.backendTokens = tokens;
-          } else if (isValidRefreshResponse(tokens) && token.backendTokens?.user) {
-            token.backendTokens = {
-              ...token.backendTokens,
-              token: tokens.token,
-              refreshToken: tokens.refreshToken,
-              tokenExpires: tokens.tokenExpires,
-            };
-          }
-        } catch (error) {
-          console.error('Failed to refresh token:', error);
-          // Clear tokens on refresh failure so the user is prompted to re-login
-          delete token.backendTokens;
-        }
+        const outcome = await refreshBackendTokens(token.backendTokens!);
+        if (outcome.status === 'refreshed') token.backendTokens = outcome.tokens;
+        else if (outcome.status === 'rejected') delete token.backendTokens; // signed out: see SessionGuard
+        // 'unavailable': keep the tokens; the next session read tries again.
       }
 
       return token;
@@ -110,6 +92,7 @@ export const authOptions: NextAuthOptions = {
           await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`, {
             method: 'POST',
             headers: {
+              ...(await relayHeaders()),
               'Authorization': `Bearer ${token.backendTokens.token}`,
             },
           });
@@ -120,6 +103,55 @@ export const authOptions: NextAuthOptions = {
     },
   },
 };
+
+/**
+ * Outcome of POST /api/v1/auth/refresh (docs/backend-api.md → "POST /api/v1/auth/refresh", "Conventions"):
+ * - `refreshed`: new tokens (the user is kept: the endpoint sends no user).
+ * - `rejected`: the refresh token is invalid or expired (401), or the answer is unusable: the user must sign in
+ *   again.
+ * - `unavailable`: a temporary problem (5xx, 429 rate limit, network). "Treat every 5xx as a temporary server
+ *   problem, never as a reason to sign the user out": keep the tokens and try again on the next session read.
+ */
+export type RefreshOutcome =
+  | { status: 'refreshed'; tokens: BackendTokens }
+  | { status: 'rejected' }
+  | { status: 'unavailable' };
+
+export async function refreshBackendTokens(current: BackendTokens): Promise<RefreshOutcome> {
+  // Outside the try: relay problems are not refresh failures.
+  const relay = await relayHeaders();
+  let response: Response;
+  try {
+    response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        ...relay,
+        'Authorization': `Bearer ${current.refreshToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+  } catch (error) {
+    console.warn('Token refresh: backend unreachable, keeping the session:', error);
+    return { status: 'unavailable' };
+  }
+
+  if (response.status === 401) return { status: 'rejected' };
+  if (!response.ok) {
+    console.warn(`Token refresh: HTTP ${response.status}, keeping the session`);
+    return { status: 'unavailable' };
+  }
+
+  const tokens: unknown = await response.json().catch(() => undefined);
+  if (isValidBackendTokens(tokens)) return { status: 'refreshed', tokens };
+  if (isValidRefreshResponse(tokens)) {
+    return {
+      status: 'refreshed',
+      tokens: { ...current, token: tokens.token, refreshToken: tokens.refreshToken, tokenExpires: tokens.tokenExpires },
+    };
+  }
+  console.error('Token refresh: unusable response, signing out');
+  return { status: 'rejected' };
+}
 
 // Refresh endpoint returns { token, refreshToken, tokenExpires } without user
 export function isValidRefreshResponse(data: any): data is Pick<BackendTokens, 'token' | 'refreshToken' | 'tokenExpires'> {

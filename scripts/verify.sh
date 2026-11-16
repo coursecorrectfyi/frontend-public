@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Runs the acceptance checks for this repo and prints a summary:
-#   npm ci, npm run typecheck, npm test, npm run test:coverage, npm run test:known-bugs, npm run build
+#   npm ci, npm run typecheck, npm run test:coverage, npm run test:known-bugs, npm run build, secret leak check
+# (test:coverage runs the whole suite and fails if any test fails, so plain `npm test` would only repeat it.)
 #
-# Usage:
-#   scripts/verify.sh            # all checks
-#   scripts/verify.sh --no-ci    # skip `npm ci` (reuse node_modules; much faster)
-#   scripts/verify.sh --clean    # delete node_modules, .next and coverage first (fresh-checkout run)
-#   scripts/verify.sh --mutations  # also run the mutation check (slow)
+# Usage (npm run verify -- <options> calls it through bash, so the file does not need the executable bit):
+#   bash scripts/verify.sh              # all checks
+#   bash scripts/verify.sh --no-ci      # skip `npm ci` (reuse node_modules; much faster)
+#   bash scripts/verify.sh --clean      # delete node_modules, .next and coverage first (fresh-checkout run)
+#   bash scripts/verify.sh --mutations  # also run the mutation check (slow)
 #
 # `npm run build` needs NEXT_PUBLIC_API_URL and NEXT_PUBLIC_GTM_ID (see README). If they are not
 # set (and there is no .env.local), placeholder values are used for this check only; the build
@@ -56,11 +57,19 @@ step() {
 
 [[ $run_ci -eq 1 ]] && step "npm ci" npm ci
 step "npm run typecheck" npm run typecheck   # fast, so it runs first
-step "npm test" npm test
 step "npm run test:coverage" npm run test:coverage
 step "npm run test:known-bugs" npm run test:known-bugs
 [[ $mutations -eq 1 ]] && step "npm run test:mutations" npm run test:mutations
-step "npm run build" env NEXT_TELEMETRY_DISABLED=1 "${build_env[@]}" npm run build
+# The build runs with a random API_RELAY_SECRET (it overrides any value in .env.local); the leak check then fails if
+# that value appears anywhere in .next/. Server-only secrets must never end up in a build artefact.
+relay_canary="relay-canary-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
+# ${arr[@]+"${arr[@]}"}: an empty array is "unbound" under `set -u` in bash < 4.4 (macOS ships bash 3.2).
+step "npm run build" env NEXT_TELEMETRY_DISABLED=1 API_RELAY_SECRET="$relay_canary" ${build_env[@]+"${build_env[@]}"} npm run build
+if [[ "${results[${#results[@]}-1]}" -eq 0 ]]; then
+  step "secret leak check" node scripts/check-build-secrets.mjs "$relay_canary"
+else
+  echo "==> secret leak check skipped: the build failed, so .next/ is stale or partial"
+fi
 
 echo
 echo "==================== verify summary ===================="
@@ -69,6 +78,6 @@ for i in "${!names[@]}"; do
   if [[ "${results[$i]}" -eq 0 ]]; then mark="PASS"; else mark="FAIL"; failed=1; fi
   printf '  %-4s  %-24s %6s\n' "$mark" "${names[$i]}" "${durations[$i]}"
 done
-[[ ${#build_env[@]} -gt 0 ]] && echo "  (build used placeholder env: ${build_env[*]})"
+[[ -n "${build_env[*]+set}" ]] && echo "  (build used placeholder env: ${build_env[*]})"
 echo "========================================================"
 exit $failed

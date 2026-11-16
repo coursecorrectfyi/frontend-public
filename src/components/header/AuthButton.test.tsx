@@ -4,7 +4,7 @@ import { allowConsole } from '@/test/console'
 import { createGate, mockApi } from '@/test/msw'
 import { makeBackendTokens } from '@/test/fixtures'
 import { firebase } from '@/test/mocks/firebase'
-import { mockSignedIn, nextAuth } from '@/test/mocks/next-auth'
+import { mockSignedIn, nextAuth, setSession } from '@/test/mocks/next-auth'
 import { router } from '@/test/mocks/next-navigation'
 import { iconButton } from '@/test/pages'
 import { renderWithProviders } from '@/test/render'
@@ -27,6 +27,20 @@ describe('AuthButton', () => {
     await waitFor(() => expect(iconButton('Google')).toBeEnabled())
   })
 
+  it('explains a failed sign-in', async () => {
+    allowConsole('error', 'Firebase sign-in failed')
+    mockApi('post', '/api/v1/auth/firebase/login', { error: 'Verify your email address before signing in', code: 'email_not_verified' }, { status: 403 })
+    const { user } = renderWithProviders(<AuthButton />)
+    await user.click(iconButton('Google'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please verify your email address first')
+  })
+
+  it('offers sign-in for a session that lost its backend tokens (it is ending)', () => {
+    setSession({ user: {}, expires: '2999-01-01T00:00:00.000Z' }, 'authenticated')
+    renderWithProviders(<AuthButton />)
+    expect(iconButton('Google')).toBeInTheDocument()
+  })
+
   it("shows the user's photo when the session has one", () => {
     const session = mockSignedIn()
     session.user = { name: 'Ada', image: 'https://example.com/ada.png' }
@@ -43,7 +57,7 @@ describe('AuthButton', () => {
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
   })
 
-  it.fails('KNOWN BUG (B18): goes straight to /saved (not the legacy /saved-courses, which redirects)', async () => {
+  it('goes straight to /saved (not the legacy /saved-courses, which redirects)', async () => {
     mockSignedIn()
     const { user } = renderWithProviders(<AuthButton />)
     await user.click(iconButton('Person'))
@@ -70,8 +84,9 @@ describe('AuthButton', () => {
     expect(firebase.signOutFirebase).toHaveBeenCalled()
   })
 
-  // The backend sends user.provider "google" (docs/backend-api.md → login response); the code checks for "firebase".
-  it.fails('KNOWN BUG (B2): also signs out of Firebase on logout', async () => {
+  // The backend sends user.provider "google" (docs/backend-api.md → login response); the code used to check for
+  // "firebase" and never signed out of Firebase (B2).
+  it('also signs out of Firebase on logout', async () => {
     mockSignedIn() // provider: 'google', as the backend sends it
     const { user } = renderWithProviders(<AuthButton />)
     await user.click(iconButton('Person'))

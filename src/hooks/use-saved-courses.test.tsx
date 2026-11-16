@@ -1,8 +1,8 @@
 import { act, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { MAX_SAVED_COURSES } from '@/api/courses'
-import { makeResource } from '@/test/fixtures'
-import { mockSignedIn } from '@/test/mocks/next-auth'
+import { ERR_ITEM_UNAVAILABLE, MAX_SAVED_COURSES } from '@/api/courses'
+import { makeBackendTokens, makeResource } from '@/test/fixtures'
+import { mockSessionLoading, mockSignedIn, nextAuth, setSession } from '@/test/mocks/next-auth'
 import { createGate, mockApi } from '@/test/msw'
 import { createTestQueryClient, renderHookWithProviders } from '@/test/render'
 import { useSavedCourses } from './use-saved-courses'
@@ -33,6 +33,22 @@ describe('useSavedCourses', () => {
     await waitFor(() => expect(result.current.savedItems).toEqual(items))
     expect(result.current.isAuthenticated).toBe(true)
     expect(calls[0].headers.get('authorization')).toBe('Bearer tok')
+  })
+
+  it('refreshes an access token about to expire before loading (an open page outlives the 1-hour token)', async () => {
+    const session = mockSignedIn({ token: 'about-to-expire', tokenExpires: Date.now() + 30_000 })
+    nextAuth.update.mockResolvedValueOnce({ ...session, backendTokens: makeBackendTokens({ token: 'fresh' }) })
+    const calls = mockApi('get', '/api/v1/saved', { data: [] })
+    const { result } = renderSaved()
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(calls[0].headers.get('authorization')).toBe('Bearer fresh')
+  })
+
+  it('reports the session state: loading while NextAuth resolves, signed out without backend tokens', () => {
+    mockSessionLoading()
+    expect(renderSaved().result.current).toMatchObject({ authStatus: 'loading', isAuthenticated: false })
+    setSession({ user: {}, expires: '2999-01-01T00:00:00.000Z' }, 'authenticated') // tokens gone: session ended
+    expect(renderSaved().result.current).toMatchObject({ authStatus: 'signed_out', isAuthenticated: false })
   })
 
   it('is shared: every component using it causes a single request', async () => {
@@ -92,7 +108,7 @@ describe('useSavedCourses', () => {
       await waitFor(() => expect(result.current.savedItems).toHaveLength(1))
 
       act(() => result.current.saveCourse('gone'))
-      await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Failed to save item' })))
+      await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: ERR_ITEM_UNAVAILABLE })))
       await waitFor(() => expect(result.current.savedItems).toEqual([existing]))
     })
 
@@ -165,7 +181,7 @@ describe('useSavedCourses', () => {
     })
   })
 
-  it.fails("KNOWN BUG (B15): never shows one user's saved items to the next user signed in on the same page", async () => {
+  it("never shows one user's saved items to the next user signed in on the same page", async () => {
     mockSignedIn({ token: 'token-1', user: { id: 'user-1' } })
     const first = makeResource({ title: 'User 1 item' })
     mockApi('get', '/api/v1/saved', request =>

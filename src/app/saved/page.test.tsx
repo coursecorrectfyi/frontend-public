@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { makeBackendTokens, makeResource } from '@/test/fixtures'
+import { limitResponse, makeBackendTokens, makeRateLimited, makeResource } from '@/test/fixtures'
 import { firebase } from '@/test/mocks/firebase'
 import { mockSessionLoading, mockSignedIn, nextAuth } from '@/test/mocks/next-auth'
 import { mockApi } from '@/test/msw'
@@ -59,9 +59,21 @@ describe('saved page', () => {
     mockApi('get', '/api/v1/saved', { error: 'x' }, { status: 401 })
     await renderPage(<SavedPage />)
     expect(await screen.findByRole('alert')).toHaveTextContent('Your session has expired. Please log in again.')
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull() // retrying would not help
   })
 
-  it.fails('KNOWN BUG (B6): shows placeholders, not the sign-in prompt, while the session is loading', async () => {
+  it("shows the backend's message when the saved items are rate limited, and tries again on request", async () => {
+    mockSignedIn()
+    let attempt = 0
+    const saved = makeResource({ title: 'Saved course' })
+    mockApi('get', '/api/v1/saved', () => (++attempt === 1 ? limitResponse(makeRateLimited({ retryAfter: 30 })) : Response.json({ data: [saved] })))
+    const { user } = await renderPage(<SavedPage />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many requests. Please wait a moment and try again.')
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('link', { name: 'Saved course' })).toBeInTheDocument()
+  })
+
+  it('shows placeholders, not the sign-in prompt, while the session is loading', async () => {
     mockSessionLoading()
     await renderPage(<SavedPage />)
     expect(screen.queryByRole('heading', { name: 'Sign in to save resources' })).toBeNull()

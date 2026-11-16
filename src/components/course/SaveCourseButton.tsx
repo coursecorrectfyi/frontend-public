@@ -5,6 +5,7 @@ import BookmarkRemove from '@mui/icons-material/BookmarkRemove';
 import { Alert, IconButton, Portal, Snackbar, Tooltip } from '@mui/material';
 import { useMemo, useState } from 'react';
 import { trackSaveCourse } from '@/utils/analytics';
+import SignInErrorSnackbar from '../auth/SignInErrorSnackbar';
 
 interface SaveCourseButtonProps {
   courseId: string;
@@ -14,7 +15,7 @@ interface SaveCourseButtonProps {
 
 export const SaveCourseButton = ({ courseId, courseName, sx }: SaveCourseButtonProps) => {
   const [error, setError] = useState<string | null>(null);
-  const { signInWithFirebase } = useFirebaseSignIn();
+  const { signInWithFirebase, error: signInError, clearError: clearSignInError } = useFirebaseSignIn();
 
   const {
     savedItems,
@@ -84,6 +85,7 @@ export const SaveCourseButton = ({ courseId, courseName, sx }: SaveCourseButtonP
         </span>
       </Tooltip>
 
+      <SignInErrorSnackbar error={signInError} onClose={clearSignInError} />
       <Portal>
         <Snackbar
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}

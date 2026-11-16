@@ -17,7 +17,7 @@ Stack: [Vitest](https://vitest.dev) · [React Testing Library](https://testing-l
 | `npm run typecheck` | `tsc --noEmit` over app code, tests and `vitest.config.mts` |
 | `npm run test:known-bugs` | Runs every `KNOWN BUG` test as a normal test and checks it fails *on its assertion* (see [Known bugs](#known-bugs)) |
 | `npm run test:mutations` | Applies deliberate breaks to app code (`scripts/mutations.mjs`) and checks the tests catch each one (see [Mutation check](#mutation-check)). Optional filter: `npm run test:mutations -- chat` |
-| `npm run verify` | The full acceptance run: `npm ci`, `test`, `test:coverage`, `test:known-bugs`, `typecheck`, `build`, with a summary. `-- --no-ci` skips `npm ci`; `-- --clean` starts from a fresh-checkout state; `-- --mutations` adds the mutation check (slow) |
+| `npm run verify` | The full acceptance run: `npm ci`, `typecheck`, `test:coverage` (the whole suite, with coverage), `test:known-bugs`, `build`, with a summary. `-- --no-ci` skips `npm ci`; `-- --clean` starts from a fresh-checkout state; `-- --mutations` adds the mutation check (slow) |
 
 Run a subset: `npx vitest run src/api` or `npx vitest run -t "limit reached"`.
 
@@ -39,6 +39,10 @@ All of this is wired in `src/test/setup.ts` and applies to every test file:
   an error log, it says so with `allowConsole('error', /pattern/)`.
 - **Fixed configuration.** `NEXT_PUBLIC_API_URL` is `http://api.test` (see `vitest.config.mts`, `test.env`).
 - **Platform mocks** for `next/navigation`, `next/image`, `next/script`, `next-auth/react` and `@/lib/firebase`.
+- **Fresh connections per test.** Each test gets a new connection pool for Node's `fetch` (`freshConnectionPool()`
+  in `src/test/msw.ts`). MSW mocks the sockets underneath `fetch`; an aborted request's socket reports "closed" a
+  moment later, and with a shared pool that failed a request of a *later* test under load
+  (`TypeError: fetch failed` … `SocketError: closed`, `bytesWritten: 0`).
 - **Isolation.** After each test: DOM cleanup, `localStorage`/`sessionStorage` cleared, GTM `dataLayer` removed,
   session/router/Firebase mocks reset, MSW handlers reset, spies and stubbed env/globals restored.
 - **Browser gaps filled** for jsdom: `matchMedia` (desktop by default), `ResizeObserver`, `IntersectionObserver`,
@@ -61,7 +65,10 @@ The harness checks itself in `src/test/harness.test.tsx`; if that file fails, no
   every candidate's accessible name and styles and costs ~0.8 s per query in such trees (27 ms with `getByLabelText`);
   a test doing a dozen of those timed out under load.
 - API response data comes from the factories in `src/test/fixtures.ts`, which follow `docs/backend-api.md`. If the
-  contract changes, change the factories first and let the failing tests show what else must change.
+  contract changes, change the factories first and let the failing tests show what else must change. That includes
+  error bodies: mock a 429 with `makeRateLimited()` / `makeDailyLimit(scope)`, not a hand-written `{ message }`.
+- API clients throw `ApiError` (`src/api/errors.ts`) for non-2xx responses: assert on `status`, `code`,
+  `retryAfter` with `rejects.toMatchObject({ ... })` rather than on message text alone.
 
 ### Helpers (`src/test/`)
 
@@ -69,7 +76,7 @@ The harness checks itself in `src/test/harness.test.tsx`; if that file fails, no
 |---|---|
 | `render.tsx` | `renderWithProviders(ui)` → `{ user, queryClient, ...RTL }` with the real theme and a fresh no-retry QueryClient. `renderHookWithProviders(hook)` for hooks |
 | `msw.ts` | `createGate()` holds a mocked response until `gate.open()`, to assert in-between states (optimistic updates, spinners) without racing timers. `mockApi(method, path, reply, init?)` mocks one backend endpoint and returns the list of requests it received (`url`, `headers`, `params`, raw `body`). Lower level: `server`, `http`, `HttpResponse`, `delay`, `apiUrl('/api/v1/...')` |
-| `fixtures.ts` | Contract-shaped factories: `makeResource`, `makeResourceDetail`, `makeSearchResponse`, `makeTopic`, `makeDomainDetail`, `makeSubtopicDetail`, `makeSubject`, `makeBackendTokens`, `makeUuid` |
+| `fixtures.ts` | Contract-shaped factories: `makeResource`, `makeResourceDetail`, `makeSearchResponse`, `makeTopic`, `makeDomainDetail`, `makeSubtopicDetail`, `makeSubject`, `makeBackendTokens`, `makeUuid`. Error bodies: `makeRateLimited`, `makeDailyLimit(scope)` (messages in `DAILY_LIMIT_MESSAGES`), `makeChatUnavailable`, `makeChatSignedInOnly`, `makeBodyTooLarge`; `limitResponse(body)` turns a 429 body into a Response with the matching `Retry-After` header (use it as a responder: `mockApi('get', path, () => limitResponse(makeRateLimited()))`) |
 | `sse.ts` | Chat stream responses: `sseResponse([delta('Hi'), done()])`, `sseResponseFromChunks([...])` for exact chunk boundaries, `controlledSse()` to drive a stream step by step |
 | `mocks/next-auth.ts` | `mockSignedIn(overrides?)`, `mockSignedOut()`, `mockSessionLoading()`, `setSession(data, status)`, spies `nextAuth.signIn` / `nextAuth.signOut` |
 | `mocks/next-navigation.ts` | `router` (spies: `push`, `replace`, ...), `setPathname()`, `setSearchParams()` |
@@ -146,37 +153,15 @@ So the assertion that proves the bug must be an `expect(...)`; don't let helpers
 
 | ID | Summary | Test |
 |---|---|---|
-| B1 | After the refresh token expires, `/auth/refresh` answers 401 but the expired tokens are kept (user looks signed in, every call 401s) | `src/lib/auth-options.test.ts` |
-| B2 | Logout only signs out of Firebase when `user.provider === 'firebase'`; the backend sends `"google"`, so Firebase is never signed out | `src/components/header/AuthButton.test.tsx` |
-| B3 | Chat: a stream that ends without `done` leaves the answer "streaming" and unsaved; `done` without any text leaves "Cora is typing..." forever | `src/hooks/use-chat-state.test.tsx` |
-| B4 | Chat: an `error` event after part of the answer adds a second message with the same id and leaves the first one streaming | `src/hooks/use-chat-state.test.tsx` |
 | B5 | Chat: a new question can be sent (Enter, button or quick prompt) while Cora is still answering | `src/components/Chat.test.tsx` |
-| B6 | `/saved` shows "Sign in to save resources" while the session is still loading | `src/app/saved/page.test.tsx` |
 | B7 | Subtopic breadcrumb links to `/subjects`, which is a 404 | `src/app/subjects/[slug]/page.test.tsx` |
-| B8 | `/learn` metadata: canonical URL is built from the requested slug/id (legacy id, stale slug) instead of the resource's slug and UUID | `src/app/metadata.test.ts` |
-| B9 | A failed "Load more" replaces the already-loaded results with an error | `src/components/resource/ResourceList.test.tsx` |
-| B10 | `/blog` proxy decodes the path: non-Latin/space paths → 502; `..%2F` escapes `/blog` (reaches `/wp-login.php`) | `src/app/blog/[[...slug]]/route.test.ts` |
-| B11 | `/blog` proxy: redirect loops are followed without limit; a relative `Location` throws an uncaught `TypeError` and the request never resolves | `src/app/blog/[[...slug]]/route.test.ts` |
-| B12 | `/blog` proxy forwards only the first `Set-Cookie` header | `src/app/blog/[[...slug]]/route.test.ts` |
-| B13 | API path params (`id`, `slug`) are not URL-encoded; `getResourceById('../saved')` actually calls `GET /api/v1/saved` | `src/api/resources.test.ts`, `src/api/subjects.test.ts` |
-| B14 | Query retry policy: the "don't retry 401/403" rule never applies (errors carry no status) and 404s are retried twice (~3 s before "not found" shows) | `src/app/providers.test.tsx` |
-| B15 | Saved-items cache key does not include the user (session has no email), so after a session expires and another account signs in without a reload, the previous user's items are shown | `src/hooks/use-saved-courses.test.tsx` |
 | B16 | `formatDuration` rounding at unit boundaries: `0.999` h → "60 min", `1.9` h → "1 hour" | `src/components/resource/resource-meta.test.ts` |
 | B17 | Search modal: `width: '100$'` typo, so the search box doesn't span the modal | `src/components/AppSearch.test.tsx` |
-| B18 | Account menu "Saved Items" goes to the legacy `/saved-courses` (redirect) instead of `/saved` | `src/components/header/AuthButton.test.tsx` |
 | B19 | Early-access form: double-clicking "Join Early Access" submits twice | `src/components/early-access/EarlyAccessModal.test.tsx` |
 | B20 | Sitemap XML: values are not escaped (`&` makes the XML invalid); `priority: 0` is dropped; the subjects sitemap drops subjects that share a name with another | `src/utils/sitemap.test.ts`, `src/app/sitemaps.test.ts` |
-| B21 | Chat SSE parser drops a final event that has no trailing newline | `src/api/chat.test.ts` |
-| B22 | Chat: a message typed while the session is still loading is ignored by the hook but cleared from the input (lost) | `src/components/Chat.test.tsx` |
-| B23 | Chat message ids come from `Date.now()`; two messages sent in the same millisecond get the same id | `src/hooks/use-chat-state.test.tsx` |
-| B25 | A stored `cc_session_id` that is not a UUID is reused (backend answers `400`) | `src/utils/session.test.ts` |
 | B26 | Chat's "New chat" button is disabled inside a Tooltip: MUI warns and the tooltip never shows. Page tests allow exactly this warning via `allowKnownPageWarnings()` (remove it there when fixed) | `src/components/Chat.test.tsx` |
 | B27 | Accessible names: icon-only buttons without names (header sign-in, account menu, chat Send, filters Close, Product Hunt hide, carousel arrows); Enroll announced as its tooltip text; breadcrumb `<nav>` unlabelled | `src/accessibility.test.tsx` |
 | B28 | `AppSearch` uses a hard-coded id for `aria-labelledby`; with two instances (header + hero) the hero button is announced with the header's label | `src/app/about-us/page.test.tsx` |
-| C3 | Chat request size/abort recommendations: history is not capped at 20 turns, `pageContextIds` not at 50, and the request is not aborted when the chat unmounts | `src/hooks/use-chat-state.test.tsx` |
-| B29 | Security: Cora's answers render Markdown images from any host, so injected content can make the browser send conversation data to a third party (exfiltration) | `src/components/SafeMarkdown.test.tsx` |
-| C1 | Chat limit banner always says "You've used your free questions…", contradicting network/global limit messages; contract says show the 429 `message` | `src/components/Chat.test.tsx` |
-| C2 | Chat `400` (message too long) and `413` show as a generic failure instead of the backend's message; no `maxLength={4000}` on the input | `src/api/chat.test.ts`, `src/components/Chat.test.tsx` |
 
 IDs are stable (`B…` = bug, `C…` = gap against the backend contract in `docs/backend-api.md`). `npm run test:known-bugs` fails if this table and the tests disagree.
 
@@ -246,5 +231,7 @@ not be lowered to make a change pass.
 | `Unhandled network request (add an MSW handler): GET http://api.test/...` | The code made a request the test did not expect or mock. Add `server.use(http.get(apiUrl(...), ...))`, or fix the code if the request is wrong |
 | `console.error: ... not wrapped in act(...)` | A state update happened after the test stopped waiting. Await the UI that results from it (`findBy...`, `waitFor`, `expect.poll`) |
 | `console.error: ... unique "key" prop` | A real rendering bug; fix the component |
-| A test times out only under `npm run verify` / coverage | It is too slow for the 20 s budget under parallel load. Profile it (time each step); the usual cause is many `getByRole(..., { name })` queries in a large MUI tree — switch form controls to `getByLabelText` |
-| Test passes alone but fails in the suite | Leaked state. Module-level caches are the usual suspect; the harness resets storage, mocks and handlers, not module variables |
+| A test times out only under `npm run verify` / coverage | The timeout (60 s) is for hangs; page tests take ~4 s on an idle machine but up to ~5× that when the CPU is oversubscribed. Check whether it is slow when idle too (`npx vitest run <file> -t "<name>"`; Vitest highlights tests over 5 s). If it is, profile it (time each step with `performance.now()`); the usual cause is many `getByRole(..., { name })` queries in a large MUI tree: switch form controls to `getByLabelText`. If it is only slow under load, reproduce that with `bash scripts/flaky-check.sh <file> 12 12 -t "<name>"` |
+| Test passes alone but fails in the suite | Leaked state. Module-level caches are the usual suspect; the harness resets storage, mocks, handlers and the connection pool, not module variables |
+| `expect(element).toBeInTheDocument()` fails right after `findByText` found it ("element could not be found") | The element was replaced after it was found, e.g. a chat answer: while it streams it's plain text, and when it ends it's re-rendered as Markdown in a new element. Wait for the final state instead: `await waitFor(() => expect(screen.getByText('…')).toBeInTheDocument())` |
+| A test fails only sometimes (often only under `verify` or coverage) | Reproduce under load: `bash scripts/flaky-check.sh <test file> [runs=24] [parallel=6] [-t "name filter"]` runs the file many times in parallel and counts failures per test. Bisect with `-t`: a test that fails only after another one points at state the first leaves behind. Confirm a fix the same way (e.g. 0 failures in 48 runs) |

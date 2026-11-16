@@ -84,12 +84,25 @@ describe('subject page', () => {
     expect(screen.getByRole('combobox')).toHaveTextContent('Relevance')
   })
 
-  it('shows an error when the subject cannot be loaded, but still lists resources for the slug', async () => {
+  it('says an unknown subject was not found, but still lists resources for the slug', async () => {
     mockApi('get', '/api/v1/subjects/:slug', { error: 'Not found' }, { status: 404 })
     const search = mockApi('get', '/api/v1/resources/search', makeSearchResponse())
     await renderSubject('machine-learning')
-    expect(await screen.findByText('Failed to load subject details.')).toBeInTheDocument()
+    expect(await screen.findByText("We couldn't find this subject.")).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull() // the same request would fail again
     await waitFor(() => expect(search[0]?.url.searchParams.get('q')).toBe('machine learning'))
+  })
+
+  it('offers to try again when the subject fails to load for a temporary reason', async () => {
+    let attempt = 0
+    mockApi('get', '/api/v1/subjects/:slug', () =>
+      ++attempt === 1 ? Response.json({ error: 'Internal server error' }, { status: 500 }) : Response.json(makeDomainDetail({ name: 'Machine Learning' })),
+    )
+    mockApi('get', '/api/v1/resources/search', makeSearchResponse())
+    const { user } = await renderSubject('machine-learning')
+    expect(await screen.findByText('Failed to load subject details.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Machine Learning' })).toBeInTheDocument()
   })
 
   describe('Cora chat panel', () => {

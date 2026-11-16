@@ -1,12 +1,31 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { headers } from 'next/headers'
+import { describe, expect, it, vi } from 'vitest'
 import { makeDomainDetail, makeResourceDetail, makeUuid } from '@/test/fixtures'
-import { mockApi } from '@/test/msw'
+import { mockApi, type RecordedRequest } from '@/test/msw'
 import { generateMetadata as learnMetadata } from './learn/[slug]/[id]/page'
 import { generateMetadata as searchMetadata } from './search/page'
 import { generateMetadata as subjectMetadata } from './subjects/[slug]/page'
 
 // Page <head> metadata: titles, descriptions and canonical URLs (SEO).
+
+vi.mock('next/headers', () => ({ headers: vi.fn() }))
+
+/** A request from 203.0.113.7 (behind a client-supplied X-Forwarded-For entry) with the relay secret configured. */
+function visitorRequest() {
+  vi.stubEnv('API_RELAY_SECRET', 'relay-secret')
+  vi.mocked(headers).mockResolvedValue(new Headers({ 'x-forwarded-for': '6.6.6.6, 203.0.113.7' }) as never)
+}
+
+const expectRelayed = (call: RecordedRequest) => {
+  expect(call.headers.get('x-relay-secret')).toBe('relay-secret')
+  expect(call.headers.get('x-visitor-ip')).toBe('203.0.113.7')
+}
+
+const expectNotRelayed = (call: RecordedRequest) => {
+  expect(call.headers.has('x-relay-secret')).toBe(false)
+  expect(call.headers.has('x-visitor-ip')).toBe(false)
+}
 
 describe('/search metadata', () => {
   const meta = (q?: string) => searchMetadata({ searchParams: Promise.resolve(q === undefined ? {} : { q }) })
@@ -49,6 +68,19 @@ describe('/subjects/[slug] metadata', () => {
     mockApi('get', '/api/v1/subjects/:slug', { error: 'Not found' }, { status: 404 })
     await expect(meta('nope')).resolves.toEqual({ title: 'CourseCorrect' })
   })
+
+  it('fetches the subject on behalf of the visitor (relay headers)', async () => {
+    visitorRequest()
+    const calls = mockApi('get', '/api/v1/subjects/:slug', makeDomainDetail())
+    await meta('data-science')
+    expectRelayed(calls[0])
+  })
+
+  it('sends no relay headers when the secret is not configured', async () => {
+    const calls = mockApi('get', '/api/v1/subjects/:slug', makeDomainDetail())
+    await meta('data-science')
+    expectNotRelayed(calls[0])
+  })
 })
 
 describe('/learn/[slug]/[id] metadata', () => {
@@ -76,10 +108,25 @@ describe('/learn/[slug]/[id] metadata', () => {
 
   // Old links use a legacy Mongo id and/or a stale slug; the backend resolves them to the same resource.
   // Every variant must declare the one canonical URL (the page itself redirects there client-side).
-  it.fails('KNOWN BUG (B8): declares the canonical slug and UUID, whatever URL was requested', async () => {
+  it('declares the canonical slug and UUID, whatever URL was requested', async () => {
     const uuid = makeUuid()
     mockApi('get', '/api/v1/resources/:id', makeResourceDetail({ id: uuid, title: 'Python for Everybody' }))
     const m = await meta('old-slug', '5f1b2c3d4e5f6a7b8c9d0e1f')
     expect(m.alternates?.canonical).toBe(`https://coursecorrect.fyi/learn/python-for-everybody/${uuid}`)
+  })
+
+  it('fetches the resource on behalf of the visitor (relay headers)', async () => {
+    visitorRequest()
+    const resource = makeResourceDetail()
+    const calls = mockApi('get', '/api/v1/resources/:id', resource)
+    await meta('x', resource.id)
+    expectRelayed(calls[0])
+  })
+
+  it('sends no relay headers when the secret is not configured', async () => {
+    const resource = makeResourceDetail()
+    const calls = mockApi('get', '/api/v1/resources/:id', resource)
+    await meta('x', resource.id)
+    expectNotRelayed(calls[0])
   })
 })

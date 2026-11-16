@@ -8,7 +8,6 @@ import WorkOutlined from '@mui/icons-material/WorkOutlined';
 import StarOutlined from '@mui/icons-material/StarOutlined';
 import SaveCourseButton from '../course/SaveCourseButton'
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -21,10 +20,15 @@ import {
   Typography,
 } from '@mui/material'
 import { trackEnrollClick } from '@/utils/analytics'
+import QueryErrorAlert from '@/components/QueryErrorAlert'
+
+/** 404: unknown, malformed or inactive id (docs/backend-api.md → GET /api/v1/resources/:id). */
+export const RESOURCE_NOT_FOUND = "We couldn't find this course. It may no longer be available."
+export const RESOURCE_FAILED = "We couldn't load this course. Please try again."
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
-import slugify from 'slugify'
 import { RESOURCE_TYPE_META, LEVEL_LABELS, formatDuration } from './resource-meta'
+import { resourcePath, resourceSlug } from '@/utils/resource-url'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -225,16 +229,15 @@ interface ResourceDetailPanelProps {
 
 export default function ResourceDetailPanel({ resourceId, urlSlug }: ResourceDetailPanelProps) {
   const router = useRouter()
-  const { data: resource, isLoading, error } = useResourceDetail(resourceId)
+  const { data: resource, isLoading, error, refetch } = useResourceDetail(resourceId)
 
   // Redirect to canonical URL when:
   //   • resourceId was a legacy mongo ID (resource.id !== resourceId), or
   //   • the slug in the URL doesn't match the resource title (e.g. /learn/anything/uuid)
   useEffect(() => {
     if (!resource) return
-    const expectedSlug = slugify(resource.title, { lower: true, strict: true })
-    if (resource.id !== resourceId || urlSlug !== expectedSlug) {
-      router.replace(`/learn/${expectedSlug}/${resource.id}`)
+    if (resource.id !== resourceId || urlSlug !== resourceSlug(resource.title)) {
+      router.replace(resourcePath(resource))
     }
   }, [resource, resourceId, urlSlug, router])
 
@@ -249,9 +252,12 @@ export default function ResourceDetailPanel({ resourceId, urlSlug }: ResourceDet
   if (error || !resource) {
     return (
       <Paper sx={{ p: 2, width: '100%' }}>
-        <Alert severity="error">
-          {error instanceof Error ? error.message : 'Resource not found.'}
-        </Alert>
+        <QueryErrorAlert
+          error={error}
+          notFound={RESOURCE_NOT_FOUND}
+          fallback={error ? RESOURCE_FAILED : RESOURCE_NOT_FOUND}
+          onRetry={() => void refetch()}
+        />
       </Paper>
     )
   }

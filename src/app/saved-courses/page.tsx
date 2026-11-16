@@ -9,11 +9,13 @@ import MainLayout from "@/layouts/MainLayout";
 import SplitViewLayout from "@/layouts/SplitViewLayout";
 import { useFirebaseSignIn } from "@/hooks/use-firebase-sign-in";
 import { openSearch } from "@/utils/search-events";
-import { Alert, Box, Button, Skeleton, Stack, Typography } from "@mui/material";
+import SignInErrorSnackbar from "@/components/auth/SignInErrorSnackbar";
+import QueryErrorAlert from "@/components/QueryErrorAlert";
+import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
 
 export default function SavedCourses() {
-  const { savedItems, isLoading, error, isAuthenticated } = useSavedCourses();
-  const { signInWithFirebase } = useFirebaseSignIn();
+  const { savedItems, isLoading, error, refetch, isAuthenticated, authStatus } = useSavedCourses();
+  const { signInWithFirebase, error: signInError, clearError } = useFirebaseSignIn();
 
   const DEFAULT_CHAT_MESSAGE = {
     id: '0',
@@ -22,14 +24,14 @@ export default function SavedCourses() {
     timestamp: new Date()
   };
 
-  const { messages, isTyping, handleSendMessage, resetChat, isLimitReached, messageCount } = useChatState({
+  const { messages, isTyping, handleSendMessage, resetChat, isLimitReached, limit, notice, dismissNotice, messageCount } = useChatState({
     pageContextIds: savedItems.map(r => r.id),
     contextKey: 'saved',
   });
 
   const renderContent = () => {
-    // Session still resolving — show skeletons rather than a flash of the sign-in prompt
-    if (isLoading) {
+    // Session still resolving, or items loading: skeletons rather than a flash of the sign-in prompt (B6)
+    if (authStatus === 'loading' || isLoading) {
       return (
         <Box display="flex" flexDirection="column" p={2} gap={2}>
           {[...Array(5)].map((_, i) => (
@@ -49,12 +51,18 @@ export default function SavedCourses() {
           <Button variant="contained" onClick={signInWithFirebase}>
             Sign in with Google
           </Button>
+          <SignInErrorSnackbar error={signInError} onClose={clearError} />
         </Box>
       );
     }
 
     if (error) {
-      return <Box p={3}><Alert severity="error">{error instanceof Error ? error.message : 'Something went wrong.'}</Alert></Box>;
+      // The API client's messages are already written for users (e.g. "Your session has expired…").
+      return (
+        <Box p={3}>
+          <QueryErrorAlert error={error} fallback={error instanceof Error ? error.message : 'Something went wrong.'} onRetry={() => void refetch()} />
+        </Box>
+      );
     }
 
     if (savedItems.length === 0) {
@@ -89,6 +97,9 @@ export default function SavedCourses() {
             resetChat={resetChat}
             defaultPrompts={['Compare these and recommend one to start', 'Am I missing anything important?', 'What order should I do these in?']}
             isLimitReached={isLimitReached}
+            limit={limit}
+            notice={notice}
+            onDismissNotice={dismissNotice}
             messageCount={messageCount}
             currentPage={CurrentPage.SAVED_COURSES}
           />

@@ -21,13 +21,19 @@ src/
   components/   UI components
   hooks/        data hooks (TanStack Query)
   layouts/      page shells, header, footer
-  lib/          Firebase client
+  lib/          Firebase client, NextAuth options; lib/server/ is server-only (relay headers)
   theme/        MUI theme (light/dark)
   types/        shared types
   test/         test harness (setup, mocks, fixtures); tests sit next to the code as *.test.ts(x)
 docs/           backend API contract, testing guide, analytics, schema markup, video and deployment notes
 public/         static assets
 ```
+
+### Static assets
+
+The home page plays four demo videos from `public/`: `bg-video.mp4`, `search-a-topic.mp4`, `real-outcomes.mp4`
+and `overthinking-it.mp4`, served from the site root. They are the largest files in the repo. The tests check the
+video markup, not the files, so the suite also runs on a copy without them.
 
 ## Getting started
 
@@ -59,6 +65,7 @@ All configuration is through environment variables (see `.env.example`). `NEXT_P
 | `NEXT_PUBLIC_HOSTINGER_IP` | build | Optional upstream host for the `/blog` reverse proxy (a WordPress site). |
 | `NEXT_PUBLIC_EARLY_ACCESS_*` | build | Optional Google Form (`FORM_URL`, `INTENT_ENTRY_ID`, `EMAIL_ENTRY_ID`) for early-access signups. |
 | `NEXTAUTH_SECRET` | runtime | Session encryption secret (`openssl rand -base64 32`). |
+| `API_RELAY_SECRET` | runtime | Optional, **server-only**. Relay secret shared with the backend (`TRUSTED_RELAY_SECRETS` there). Backend calls the server makes for a visitor (page metadata, subjects sitemap, token refresh, logout) then carry `X-Relay-Secret` and `X-Visitor-IP`, so they count against that visitor's rate limits; without it they all share the server's. Must never be `NEXT_PUBLIC_*`, a `next.config.ts` `env` entry or a Docker build arg: tests and `npm run verify` check this (see `src/lib/server/relay.ts`). |
 | `NEXTAUTH_URL` | runtime | Public base URL of the site. |
 
 ## Scripts
@@ -68,12 +75,12 @@ All configuration is through environment variables (see `.env.example`). `NEXT_P
 | `npm run dev` | Dev server with Turbopack on port 3001 |
 | `npm run build` | Production build (`output: 'standalone'`) |
 | `npm start` | Serve the production build |
-| `npm run lint` | ESLint (`eslint .`) |
+| `npm run lint` | ESLint (`eslint .`). Currently fails (55 known errors, deferred); don't add new ones |
 | `npm test` | Unit and component tests (Vitest); no backend, Firebase or network needed |
 | `npm run test:watch` | Tests in watch mode |
 | `npm run test:coverage` | Tests with a coverage report in `coverage/` |
 | `npm run typecheck` | TypeScript type check (`next build` skips it: `ignoreBuildErrors` is on) |
-| `npm run verify` | Acceptance run: `npm ci`, tests, coverage, typecheck, build, with a summary |
+| `npm run verify` | Acceptance run: `npm ci`, typecheck, tests with coverage, known-bug check, build, with a summary. Runs `bash scripts/verify.sh` (bash ≥ 3.2, e.g. macOS's `/bin/bash`; zsh as your login shell is fine, but don't run the script with `sh` or `zsh`) |
 
 See [docs/testing.md](docs/testing.md) for how the tests work and how to write them.
 

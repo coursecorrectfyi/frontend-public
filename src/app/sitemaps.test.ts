@@ -1,3 +1,4 @@
+import { headers } from 'next/headers'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +9,8 @@ import { parseXml, textOf } from '@/test/xml'
 import { GET as sitemapIndex } from './sitemap.xml/route'
 import { GET as staticSitemap } from './sitemap/static.xml/route'
 import { GET as subjectsSitemap } from './sitemap/subjects.xml/route'
+
+vi.mock('next/headers', () => ({ headers: vi.fn() }))
 
 const NOW = new Date('2026-03-01T12:00:00.000Z')
 
@@ -78,6 +81,15 @@ describe('/sitemap/subjects.xml', () => {
       'https://coursecorrect.fyi/subjects/python',
     ])
     expect(textOf(doc, 'lastmod')).toEqual([NOW.toISOString(), NOW.toISOString()])
+  })
+
+  it('fetches the subjects on behalf of the requester (relay headers)', async () => {
+    vi.stubEnv('API_RELAY_SECRET', 'relay-secret')
+    vi.mocked(headers).mockResolvedValue(new Headers({ 'x-forwarded-for': '66.249.66.1' }) as never) // a crawler
+    const calls = mockApi('get', '/api/v1/subjects', [makeTopic()])
+    await subjectsSitemap()
+    expect(calls[0].headers.get('x-relay-secret')).toBe('relay-secret')
+    expect(calls[0].headers.get('x-visitor-ip')).toBe('66.249.66.1')
   })
 
   it('answers 500 when the backend is unavailable (rather than an empty sitemap)', async () => {

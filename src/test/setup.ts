@@ -16,7 +16,7 @@ import { installConsoleGuard, uninstallConsoleGuard } from './console'
 import { resetFirebase } from './mocks/firebase'
 import { resetSession } from './mocks/next-auth'
 import { resetNavigation } from './mocks/next-navigation'
-import { server, startServer, takeUnhandledRequests } from './msw'
+import { freshConnectionPool, server, startServer, takeUnhandledRequests } from './msw'
 
 vi.mock('next/navigation', async () => (await import('./mocks/next-navigation')).nextNavigationMock)
 vi.mock('next-auth/react', async () => (await import('./mocks/next-auth')).nextAuthReactMock)
@@ -56,7 +56,9 @@ beforeAll(() => {
   startServer()
 })
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Connections from the previous test (e.g. an aborted request still closing) can't affect this one.
+  await freshConnectionPool()
   if (isBrowserEnv) installBrowserPolyfills()
   installConsoleGuard()
 })

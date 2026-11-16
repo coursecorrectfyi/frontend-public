@@ -7,8 +7,8 @@ import {
   Box, Button, Card, Chip, Rating, styled, Tooltip, Typography,
 } from '@mui/material';
 import SaveCourseButton from '../course/SaveCourseButton';
-import slugify from 'slugify';
 import { RESOURCE_TYPE_META, LEVEL_LABELS, formatDuration } from './resource-meta';
+import { resourcePath } from '@/utils/resource-url';
 
 interface ResourceCardProps {
   resource: LearningResource;
@@ -36,7 +36,7 @@ export function ResourceCard({ resource, position, enrollSource = 'search_result
     is_free, is_self_paced, has_certificate, url,
   } = resource;
 
-  const detailUrl = `/learn/${slugify(title, { lower: true, strict: true })}/${id}`;
+  const detailUrl = resourcePath(resource);
   const topSkills = skills?.slice(0, 4) ?? [];
   const duration = formatDuration(duration_hours);
 

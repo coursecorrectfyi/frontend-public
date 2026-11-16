@@ -2,8 +2,8 @@
 import { addCourseToShortlist, ERR_NO_AUTH_TOKEN, getSavedCourses, MAX_SAVED_COURSES, removeCourseFromShortlist } from '@/api/courses';
 import type { LearningResource } from '@/types/resource';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSession } from 'next-auth/react';
 import { useMemo } from 'react';
+import { useAuth } from './use-auth';
 
 interface SaveCourseOptions {
   onSuccess?: () => void;
@@ -11,31 +11,28 @@ interface SaveCourseOptions {
 }
 
 export function useSavedCourses(options?: SaveCourseOptions) {
-  const { data: session, status } = useSession();
+  const { status: authStatus, isSignedIn: isAuthenticated, userId, getAccessToken } = useAuth();
   const queryClient = useQueryClient();
-  const isAuthenticated = status === 'authenticated' && !!session?.user;
 
-  // Include user identity in the key so React Query treats a session change as a new query.
-  const queryKey = ['saved-items', session?.user?.email ?? null] as const;
+  // The user's id is part of the key, so another account signed in on the same page never sees the previous
+  // account's cached items (the session has no email: keying on it shared one cache entry between users, B15).
+  const queryKey = useMemo(() => ['saved-items', userId] as const, [userId]);
 
   const MAX_REACHED_MSG = `You can shortlist up to ${MAX_SAVED_COURSES} items. Please remove some before adding more.`;
 
-  const canAddMoreCourses = useMemo(() => {
-    const items = queryClient.getQueryData<LearningResource[]>(queryKey);
-    return (items?.length ?? 0) < MAX_SAVED_COURSES;
-  }, [queryClient, queryKey]);
-
   const query = useQuery({
     queryKey,
-    queryFn: () => getSavedCourses((session as any)?.backendTokens?.token),
+    queryFn: async () => getSavedCourses((await getAccessToken()) ?? ''),
     enabled: isAuthenticated,
     retry: false,
     refetchOnWindowFocus: false,
   });
 
+  const canAddMoreCourses = (query.data?.length ?? 0) < MAX_SAVED_COURSES;
+
   const saveMutation = useMutation({
     mutationFn: async (courseId: string) => {
-      const token = (session as any)?.backendTokens?.token;
+      const token = await getAccessToken();
       if (!token) throw new Error(ERR_NO_AUTH_TOKEN);
       if (!canAddMoreCourses) throw new Error(MAX_REACHED_MSG);
       return addCourseToShortlist(token, courseId);
@@ -65,8 +62,7 @@ export function useSavedCourses(options?: SaveCourseOptions) {
 
   const removeMutation = useMutation({
     mutationFn: async (courseId: string) => {
-      const token = (session as any)?.backendTokens?.token;
-      return removeCourseFromShortlist(token, courseId);
+      return removeCourseFromShortlist((await getAccessToken()) ?? '', courseId);
     },
     onMutate: async (courseId) => {
       await queryClient.cancelQueries({ queryKey });
@@ -91,6 +87,8 @@ export function useSavedCourses(options?: SaveCourseOptions) {
     ...query,
     savedItems: query.data ?? [],
     isAuthenticated,
+    /** `loading` while the session is being resolved: show placeholders, not the sign-in prompt (B6). */
+    authStatus,
     saveCourse: saveMutation.mutate,
     removeCourse: removeMutation.mutate,
     isMutating: saveMutation.isPending || removeMutation.isPending,

@@ -3,10 +3,10 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { useSearchResources } from '@/hooks/use-search-resources'
 import type { ResourceFilters } from '@/types/resource'
-import { makeResource, makeSearchResponse } from '@/test/fixtures'
+import { limitResponse, makeRateLimited, makeResource, makeSearchResponse } from '@/test/fixtures'
 import { createGate, mockApi } from '@/test/msw'
 import { renderWithProviders } from '@/test/render'
-import ResourceList from './ResourceList'
+import ResourceList, { LOAD_MORE_FAILED, RESULTS_CHANGED, SEARCH_FAILED } from './ResourceList'
 
 // ResourceList wired to the real search hook, as the search and subject pages use it.
 
@@ -182,16 +182,89 @@ describe('ResourceList', () => {
     })
   })
 
-  it.fails('KNOWN BUG (B9): keeps the loaded results when "Load more" fails', async () => {
-    const first = makeResource({ title: 'First page result' })
-    mockApi('get', '/api/v1/resources/search', (req: Request) =>
-      new URL(req.url).searchParams.get('cursor')
-        ? Response.json({ error: 'x' }, { status: 500 })
-        : Response.json(makeSearchResponse({ data: [first], next_cursor: 'c2' })),
-    )
-    const { user } = renderList()
-    await user.click(await screen.findByRole('button', { name: 'Load more' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull())
-    expect(screen.queryByRole('link', { name: 'First page result' })).not.toBeNull()
+  describe('failures', () => {
+    const first = () => makeResource({ title: 'First page result' })
+
+    it('keeps the loaded results when "Load more" fails, and can try again', async () => {
+      // (was B9: the results were replaced by an error)
+      const results = first()
+      let attempts = 0
+      mockApi('get', '/api/v1/resources/search', (req: Request) => {
+        if (!new URL(req.url).searchParams.get('cursor')) return Response.json(makeSearchResponse({ data: [results], next_cursor: 'c2' }))
+        return ++attempts === 1
+          ? Response.json({ error: 'Internal server error' }, { status: 500 })
+          : Response.json(makeSearchResponse({ data: [makeResource({ title: 'Second page result' })], next_cursor: null }))
+      })
+      const { user } = renderList()
+      await user.click(await screen.findByRole('button', { name: 'Load more' }))
+      expect(await screen.findByText(LOAD_MORE_FAILED)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'First page result' })).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(await screen.findByRole('link', { name: 'Second page result' })).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'First page result' })).toBeInTheDocument()
+    })
+
+    it("shows the backend's message when \"Load more\" is rate limited, and keeps the results", async () => {
+      mockApi('get', '/api/v1/resources/search', (req: Request) =>
+        new URL(req.url).searchParams.get('cursor')
+          ? limitResponse(makeRateLimited({ retryAfter: 30 }))
+          : Response.json(makeSearchResponse({ data: [first()], next_cursor: 'c2' })),
+      )
+      const { user } = renderList()
+      await user.click(await screen.findByRole('button', { name: 'Load more' }))
+      expect(await screen.findByText('Too many requests. Please wait a moment and try again.')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'First page result' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+    })
+
+    it('reloads from the first page when the cursor is no longer valid (400 "Invalid cursor")', async () => {
+      let firstPageLoads = 0
+      const calls = mockApi('get', '/api/v1/resources/search', (req: Request) => {
+        if (new URL(req.url).searchParams.get('cursor')) return Response.json({ error: 'Invalid cursor' }, { status: 400 })
+        firstPageLoads++
+        return Response.json(makeSearchResponse({ data: [makeResource({ title: `Load ${firstPageLoads}` })], next_cursor: 'c2' }))
+      })
+      const { user } = renderList()
+      await user.click(await screen.findByRole('button', { name: 'Load more' }))
+      expect(await screen.findByText(RESULTS_CHANGED)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Load 1' })).toBeInTheDocument() // still shown meanwhile
+
+      await user.click(screen.getByRole('button', { name: 'Reload results' }))
+      expect(await screen.findByRole('link', { name: 'Load 2' })).toBeInTheDocument()
+      expect(calls.at(-1)!.url.searchParams.has('cursor')).toBe(false) // from the first page again
+    })
+
+    it("shows the backend's message when the search is rate limited, and tries again on request", async () => {
+      let attempt = 0
+      mockApi('get', '/api/v1/resources/search', () =>
+        ++attempt === 1 ? limitResponse(makeRateLimited({ retryAfter: 30 })) : Response.json(makeSearchResponse({ data: [first()] })),
+      )
+      const { user } = renderList()
+      expect(await screen.findByRole('alert')).toHaveTextContent('Too many requests. Please wait a moment and try again.')
+      await user.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(await screen.findByRole('link', { name: 'First page result' })).toBeInTheDocument()
+    })
+
+    it('says the search failed, without a retry that would fail the same way (400)', async () => {
+      mockApi('get', '/api/v1/resources/search', { error: 'Invalid level: "expert"' }, { status: 400 })
+      renderList()
+      expect(await screen.findByRole('alert')).toHaveTextContent(SEARCH_FAILED)
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    })
+  })
+
+  it('does not search for a blank query (the backend requires q)', async () => {
+    // No handler registered: a request would fail the test.
+    renderList({ query: '   ' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(screen.getByText('No results found')).toBeInTheDocument()
+  })
+
+  it('searches the trimmed query', async () => {
+    const calls = mockApi('get', '/api/v1/resources/search', makeSearchResponse())
+    renderList({ query: '  python  ' })
+    await waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0].url.searchParams.get('q')).toBe('python')
   })
 })

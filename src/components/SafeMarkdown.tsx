@@ -7,6 +7,15 @@ interface SafeMarkdownProps {
   className?: string;
 }
 
+/**
+ * Renders Cora's answers. They are untrusted: model output that can echo user input and third-party course data.
+ *
+ * - Raw HTML is not rendered (react-markdown's default) and unsafe URLs (`javascript:`, `data:`, ...) are dropped
+ *   by its default `urlTransform`.
+ * - Links open in a new tab with `noopener noreferrer`.
+ * - Images are never loaded, only their alt text is shown: the browser fetches an image automatically, so injected
+ *   content could smuggle conversation data out in an image URL (B29). Cora's answers don't need images.
+ */
 export default function SafeMarkdown({ content, className }: SafeMarkdownProps) {
   const theme = useTheme();
 
@@ -48,6 +57,8 @@ export default function SafeMarkdown({ content, className }: SafeMarkdownProps) 
             <TableCell sx={{ fontWeight: 'bold' }}>{children}</TableCell>
           ),
           td: ({ children }) => <TableCell>{children}</TableCell>,
+          // Covers inline (`![alt](url)`) and reference-style images. No <img>, so nothing is fetched.
+          img: ({ alt }) => (alt ? <span>{alt}</span> : null),
         }}
       >
         {content}

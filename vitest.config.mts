@@ -12,7 +12,12 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // `import 'server-only'` (src/lib/server/*): Next.js maps it to an empty module for server code and to a
+      // throwing one for client bundles. Tests run the server code, so they get the empty one.
+      'server-only': fileURLToPath(new URL('./node_modules/next/dist/compiled/server-only/empty.js', import.meta.url)),
+    },
   },
   // tsconfig.json has "jsx": "preserve" (Next.js compiles JSX itself); tests need it compiled.
   oxc: { jsx: { runtime: 'automatic' } },
@@ -20,8 +25,14 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./src/test/setup.ts'],
-    // Page-level tests click through real MUI components; 5 s (the default) is too tight on slow machines.
-    testTimeout: 20_000,
+    // The timeout only catches hangs; slowness is reported separately (slowTestThreshold). Page-level tests render
+    // the whole page and click through real MUI components: ~4 s on an idle 4-core machine, but ~19 s when the CPU
+    // is oversubscribed (measured: 12 parallel runs on 4 cores, `bash scripts/flaky-check.sh`). 20 s timed out under
+    // `npm run verify` on a busy machine, so 60 s leaves ~3x headroom over that worst case.
+    testTimeout: 60_000,
+    // Durations over this are highlighted in the output: a test that is slow even when the machine is idle deserves a
+    // look (see docs/testing.md → Troubleshooting).
+    slowTestThreshold: 5_000,
     env: {
       NEXT_PUBLIC_API_URL: 'http://api.test',
       NEXT_PUBLIC_GTM_ID: 'GTM-TEST',

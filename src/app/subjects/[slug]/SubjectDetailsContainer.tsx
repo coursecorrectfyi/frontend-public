@@ -9,17 +9,21 @@ import { useSearchResources } from '@/hooks/use-search-resources';
 import SplitViewLayout from '@/layouts/SplitViewLayout';
 import type { ResourceFilters } from '@/types/resource';
 import {
-  Alert, Box, Breadcrumbs, Chip, Divider, Link,
+  Box, Breadcrumbs, Chip, Divider, Link,
   Skeleton, Stack, Typography,
 } from '@mui/material';
 import { useCallback, useState } from 'react';
+import QueryErrorAlert from '@/components/QueryErrorAlert';
+
+export const SUBJECT_NOT_FOUND = "We couldn't find this subject.";
+export const SUBJECT_FAILED = 'Failed to load subject details.';
 
 interface SubjectDetailsContainerProps {
   slug: string;
 }
 
 export default function SubjectDetailsContainer({ slug }: SubjectDetailsContainerProps) {
-  const { data: subject, isLoading: subjectLoading, error: subjectError } = useGetSubject(slug);
+  const { data: subject, isLoading: subjectLoading, error: subjectError, refetch: refetchSubject } = useGetSubject(slug);
 
   // Derive search query from slug immediately — don't wait for the topic to load.
   // Once the topic loads we use the canonical name, which is usually the same.
@@ -36,7 +40,7 @@ export default function SubjectDetailsContainer({ slug }: SubjectDetailsContaine
   }, []);
 
   const resourceIds = queryResult.data?.pages[0]?.data.map(r => r.id) ?? [];
-  const { messages, isTyping, handleSendMessage, resetChat, isLimitReached, messageCount } =
+  const { messages, isTyping, handleSendMessage, resetChat, isLimitReached, limit, notice, dismissNotice, messageCount } =
     useChatState({ pageContextIds: resourceIds, contextKey: `subject:${slug}` });
 
   const topic = subject?.topic;
@@ -58,7 +62,12 @@ export default function SubjectDetailsContainer({ slug }: SubjectDetailsContaine
     if (subjectError) {
       return (
         <Box sx={{ p: 2 }}>
-          <Alert severity="error">Failed to load subject details.</Alert>
+          <QueryErrorAlert
+            error={subjectError}
+            notFound={SUBJECT_NOT_FOUND}
+            fallback={SUBJECT_FAILED}
+            onRetry={() => void refetchSubject()}
+          />
         </Box>
       );
     }
@@ -161,6 +170,9 @@ export default function SubjectDetailsContainer({ slug }: SubjectDetailsContaine
           isTyping={isTyping}
           resetChat={resetChat}
           isLimitReached={isLimitReached}
+          limit={limit}
+          notice={notice}
+          onDismissNotice={dismissNotice}
           messageCount={messageCount}
           currentPage={CurrentPage.SUBJECT_PAGE}
           searchTerm={topic?.name ?? searchQuery}

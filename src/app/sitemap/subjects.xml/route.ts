@@ -1,11 +1,13 @@
 import { getSubjects, type Subject } from '@/api/subjects'
+import { relayHeaders } from '@/lib/server/relay'
 import { getBaseUrl } from '@/utils/utils'
 
 export async function GET() {
   const baseUrl = getBaseUrl()
 
   try {
-    const subjects = await getSubjects()
+    // Relayed for the requester (usually a crawler), like every call the server makes for a visitor.
+    const subjects = await getSubjects({ headers: await relayHeaders() })
     const currentDate = new Date().toISOString()
 
     return new Response(

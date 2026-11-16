@@ -1,13 +1,15 @@
 'use client';
 
-import { CurrentPage } from '@/api/chat';
+import { CurrentPage, MAX_MESSAGE_LENGTH } from '@/api/chat';
+import { type ChatLimit, type ChatNotice, GUEST_SCOPES, type SendOutcome } from '@/hooks/use-chat-state';
 import { trackEvent } from '@/utils/analytics';
 import { useFirebaseSignIn } from '@/hooks/use-firebase-sign-in';
 import KeyboardArrowRightRounded from '@mui/icons-material/KeyboardArrowRightRounded';
 import RestartAlt from '@mui/icons-material/RestartAlt';
 import SendIcon from '@mui/icons-material/Send';
-import { alpha, Box, Button, IconButton, Paper, Stack, TextField, Tooltip, Typography, useTheme } from '@mui/material';
-import { useSession } from 'next-auth/react';
+import { Alert, alpha, Box, Button, IconButton, Paper, Stack, TextField, Tooltip, Typography, useTheme } from '@mui/material';
+import { useAuth } from '@/hooks/use-auth';
+import SignInErrorSnackbar from './auth/SignInErrorSnackbar';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import SafeMarkdown from './SafeMarkdown';
@@ -62,14 +64,50 @@ const MessageBubble = ({ message }: { message: ChatMessage }) => {
 
 const LONG_CONVERSATION_THRESHOLD = 15;
 
+/** Banner text when no backend message is available. */
+export const DEFAULT_LIMIT_TEXT = "You've reached today's limit for questions.";
+
+/** "You can ask again in n seconds." until `retryAt`, then nothing. */
+function RetryCountdown({ retryAt }: { retryAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
+  if (seconds === 0) return null;
+  return <> You can ask again in {seconds} second{seconds === 1 ? '' : 's'}.</>;
+}
+
+/** Show "n / 4,000" under the input from this many characters on. */
+export const LENGTH_COUNTER_FROM = MAX_MESSAGE_LENGTH - 400;
+
+/**
+ * Counter under the input, and what to do when the message is too long. A long message (e.g. a paste) is never cut:
+ * a cut-off question would be sent without the user noticing. It stays whole and can't be sent until shortened.
+ */
+export function lengthHint(length: number): string | undefined {
+  if (length < LENGTH_COUNTER_FROM) return undefined;
+  const counter = `${length.toLocaleString('en-US')} / ${MAX_MESSAGE_LENGTH.toLocaleString('en-US')}`;
+  if (length <= MAX_MESSAGE_LENGTH) return counter;
+  const over = length - MAX_MESSAGE_LENGTH;
+  return `${counter}: too long to send. Remove ${over.toLocaleString('en-US')} character${over === 1 ? '' : 's'}.`;
+}
+
 interface ChatProps {
   messages: ChatMessage[];
   defaultMessage?: ChatMessage;
   defaultPrompts?: string[];
-  onSendMessage: (message: string, currentPage: CurrentPage, searchTerm?: string) => void;
+  /** May return what happened; a question that was `not_sent` is put back into the input. */
+  onSendMessage: (message: string, currentPage: CurrentPage, searchTerm?: string) => void | Promise<SendOutcome | void>;
   isTyping: boolean;
   resetChat: () => void;
   isLimitReached?: boolean;
+  /** The daily limit that was hit: its message is shown in the banner, its scope decides whether to offer sign-in. */
+  limit?: ChatLimit | null;
+  /** Why the last question could not be sent (rate limit, chat switched off, failure). */
+  notice?: ChatNotice | null;
+  onDismissNotice?: () => void;
   messageCount?: number;
   currentPage: CurrentPage;
   searchTerm?: string;
@@ -83,13 +121,15 @@ export default function Chat({
   isTyping,
   resetChat,
   isLimitReached,
+  limit,
+  notice,
+  onDismissNotice,
   messageCount = 0,
   currentPage,
   searchTerm = "",
 }: ChatProps) {
   const theme = useTheme();
-  const { status } = useSession();
-  const isAuthenticated = status === 'authenticated';
+  const { isSignedIn: isAuthenticated } = useAuth();
   const router = useRouter();
   const [inputMessage, setInputMessage] = useState('');
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -117,12 +157,28 @@ export default function Chat({
     }
   }, [isTyping]);
 
-  const handleSend = () => {
-    let trimmed = inputMessage.trim()
-    if (!trimmed || isLimitReached) return;
+  // Measured like the backend: surrounding whitespace doesn't count (docs/backend-api.md → chat `message`).
+  const messageLength = inputMessage.trim().length;
+  const isTooLong = messageLength > MAX_MESSAGE_LENGTH;
 
-    onSendMessage(trimmed, currentPage, searchTerm);
+  // While rate limited, nothing can be sent until the wait is over (the hook clears the notice then).
+  const isCoolingDown = notice?.kind === 'rate_limited';
+
+  /**
+   * A question that got no answer goes back into the input, so it can be sent again or copied. If something
+   * new was typed meanwhile, the question goes first: nothing is lost.
+   */
+  const giveBack = (outcome: SendOutcome | void) => {
+    if (!outcome || outcome.status !== 'not_sent') return;
+    setInputMessage(current => (current.trim() ? `${outcome.message}\n\n${current}` : outcome.message));
+  };
+
+  const handleSend = async () => {
+    const trimmed = inputMessage.trim()
+    if (!trimmed || isLimitReached || isCoolingDown || trimmed.length > MAX_MESSAGE_LENGTH) return;
+
     setInputMessage('');
+    giveBack(await onSendMessage(trimmed, currentPage, searchTerm));
   };
 
   const handleReset = () => {
@@ -138,15 +194,15 @@ export default function Chat({
     }
   };
 
-  const handlePromptClick = (prompt: string) => {
-    if (isLimitReached) return;
+  const handlePromptClick = async (prompt: string) => {
+    if (isLimitReached || isCoolingDown) return;
 
     // Send the prompt as a user message
-    onSendMessage(prompt, currentPage, searchTerm);
+    giveBack(await onSendMessage(prompt, currentPage, searchTerm));
   };
 
   const isLongConversation = messageCount >= LONG_CONVERSATION_THRESHOLD;
-  const { signInWithFirebase } = useFirebaseSignIn();
+  const { signInWithFirebase, error: signInError, clearError: clearSignInError } = useFirebaseSignIn();
 
   return (
     <Paper
@@ -157,6 +213,7 @@ export default function Chat({
         flexDirection: 'column',
       }}
     >
+      <SignInErrorSnackbar error={signInError} onClose={clearSignInError} />
       {/* Messages Container */}
       <Box
         ref={chatContainerRef}
@@ -276,12 +333,11 @@ export default function Chat({
             gap: 1,
           }}
         >
+          {/* The backend's own message: it says which limit was hit (yours, your network's, everyone's) (C1). */}
           <Typography color="warning.main" variant="body2" align="center">
-            {isAuthenticated
-              ? "You've used your free questions for today. Come back tomorrow."
-              : "You've used your free questions for today. Sign in for more, or come back tomorrow."}
+            {limit?.message ?? DEFAULT_LIMIT_TEXT}
           </Typography>
-          {!isAuthenticated && (
+          {!isAuthenticated && (!limit?.scope || GUEST_SCOPES.includes(limit.scope)) && (
             <Button
               variant="outlined"
               size="small"
@@ -292,6 +348,40 @@ export default function Chat({
             </Button>
           )}
         </Box>
+      )}
+
+      {/* Why the last question wasn't sent (it is back in the input) */}
+      {notice && (
+        <Alert
+          severity={notice.kind === 'failed' ? 'error' : 'warning'}
+          onClose={onDismissNotice}
+          sx={{ mx: 2, mb: 1 }}
+        >
+          {notice.message}
+          {notice.kind === 'rate_limited' && <RetryCountdown retryAt={notice.retryAt} />}
+          {notice.kind === 'unavailable' && notice.signIn && (
+            <Box sx={{ mt: 1 }}>
+              <Button variant="outlined" size="small" color="warning" onClick={signInWithFirebase}>
+                Sign in with Google
+              </Button>
+            </Box>
+          )}
+          {/* A daily limit that doesn't lock (network, everyone's totals): trying again costs nothing. */}
+          {notice.kind === 'daily_limit' && (
+            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              {notice.signIn && !isAuthenticated && (
+                <Button variant="outlined" size="small" color="warning" onClick={signInWithFirebase}>
+                  Sign in with Google
+                </Button>
+              )}
+              {inputMessage.trim() && (
+                <Button variant="text" size="small" color="warning" onClick={() => void handleSend()}>
+                  Try again
+                </Button>
+              )}
+            </Stack>
+          )}
+        </Alert>
       )}
 
       {/* Long conversation nudge */}
@@ -323,25 +413,28 @@ export default function Chat({
           <TextField
             fullWidth
             variant="outlined"
-            placeholder={isLimitReached ? "Reset chat to continue..." : "Type your message..."}
+            placeholder={isLimitReached ? "Daily question limit reached" : "Type your message..."}
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
             onKeyPress={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                handleSend();
+                void handleSend();
               }
             }}
             size="small"
             multiline
             maxRows={4}
-            disabled={isLimitReached}
             inputRef={inputRef}
+            error={isTooLong}
+            helperText={lengthHint(messageLength)}
+            // Read-only, not disabled, when locked: a question given back can still be selected and copied.
+            slotProps={{ htmlInput: { readOnly: isLimitReached } }}
           />
           <IconButton
             color="primary"
             onClick={handleSend}
-            disabled={!inputMessage.trim() || isLimitReached}
+            disabled={!inputMessage.trim() || isLimitReached || isTooLong || isCoolingDown}
             sx={{
               alignSelf: 'flex-end',
               '&:hover': {

@@ -14,7 +14,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "typecheck": "node -e \"require('fs').rmSync('.next/types',{recursive:true,force:true})\" && next typegen && tsc --noEmit",
-    "verify": "scripts/verify.sh",
+    "verify": "bash scripts/verify.sh",
     "test:known-bugs": "node scripts/known-bugs.mjs",
     "test:mutations": "node scripts/mutation-check.mjs"
   },

@@ -104,6 +104,30 @@ describe('network isolation', () => {
   })
 })
 
+describe('connection isolation', () => {
+  // An aborted request's mocked socket reports "closed" late; with a shared pool, that failed a request of a later
+  // test under load (see freshConnectionPool in src/test/msw.ts). Each test must get its own pool.
+  const dispatcher = () => (globalThis as unknown as Record<symbol, object | undefined>)[Symbol.for('undici.globalDispatcher.1')]
+  const seen: object[] = []
+
+  it('gives each test a connection pool of its own (1/2)', async () => {
+    seen.push(dispatcher()!)
+    expect(seen[0]).toBeDefined()
+    expect(seen[0].constructor.name).toBe('Agent') // still Node's undici Agent: the workaround found it
+  })
+
+  it('gives each test a connection pool of its own (2/2)', async () => {
+    seen.push(dispatcher()!)
+    expect(seen[1]).toBeDefined()
+    expect(seen[1]).not.toBe(seen[0])
+  })
+
+  it('still answers mocked requests through the fresh pool', async () => {
+    server.use(mswHttp.get(apiUrl('/pool-check'), () => HttpResponse.json({ ok: true })))
+    await expect((await fetch(apiUrl('/pool-check'))).json()).resolves.toEqual({ ok: true })
+  })
+})
+
 describe('console guard', () => {
   it('records unexpected console.error and swallows allowed ones', () => {
     allowConsole('error', /expected failure/)

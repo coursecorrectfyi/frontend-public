@@ -2,7 +2,9 @@ import { searchResources } from '@/api/resources'
 import type { ResourceFilters, ResourceSearchResponse } from '@/types/resource'
 import { InfiniteData, useInfiniteQuery } from '@tanstack/react-query'
 
-export function useSearchResources(query: string, filters: ResourceFilters, filtersReady = false) {
+export function useSearchResources(rawQuery: string, filters: ResourceFilters, filtersReady = false) {
+  // `q` is required: a blank one gets 400 "Missing required query parameter: q", so it isn't sent at all.
+  const query = rawQuery.trim()
   return useInfiniteQuery({
     queryKey: ['resources', 'search', query, filters] as const,
     queryFn: ({ pageParam }) =>
