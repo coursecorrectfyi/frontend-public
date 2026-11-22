@@ -26,6 +26,7 @@ export function assertRequiredBuildEnv(env: Record<string, string | undefined> =
       problems.push(`${name} must be an absolute http(s) URL, got "${value}"`);
     }
   }
+  problems.push(...earlyAccessProblems(env));
   if (problems.length > 0) {
     throw new Error(
       `Invalid build-time environment:\n  - ${problems.join("\n  - ")}\n` +
@@ -33,6 +34,36 @@ export function assertRequiredBuildEnv(env: Record<string, string | undefined> =
         "or in .env.local (see .env.example and README.md).",
     );
   }
+}
+
+/**
+ * The early-access form (src/components/early-access/EarlyAccessModal.tsx) posts to a Google Form. It is optional:
+ * with none of these set, the form is off. But a partial or malformed setting would make every signup fail
+ * silently (the request is `no-cors`, so its result can't be read), so that stops the build.
+ */
+export const EARLY_ACCESS_BUILD_ENV = [
+  "NEXT_PUBLIC_EARLY_ACCESS_FORM_URL",
+  "NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID",
+  "NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID",
+] as const;
+
+function earlyAccessProblems(env: Record<string, string | undefined>): string[] {
+  const values = EARLY_ACCESS_BUILD_ENV.map((name) => [name, env[name]?.trim() ?? ""] as const);
+  const set = values.filter(([, value]) => value !== "");
+  if (set.length === 0) return [];
+  if (set.length < values.length) {
+    const missing = values.filter(([, value]) => value === "").map(([name]) => name);
+    return [`${missing.join(", ")} not set: set all three NEXT_PUBLIC_EARLY_ACCESS_* variables, or none`];
+  }
+  const problems: string[] = [];
+  const [[urlName, url], ...entries] = values;
+  if (!/^https:\/\/docs\.google\.com\/forms\/\S+\/formResponse$/.test(url)) {
+    problems.push(`${urlName} must be a Google Form's https://docs.google.com/forms/.../formResponse URL, got "${url}"`);
+  }
+  for (const [name, value] of entries) {
+    if (!/^entry\.\d+$/.test(value)) problems.push(`${name} must look like "entry.123456789", got "${value}"`);
+  }
+  return problems;
 }
 
 const nextConfig: NextConfig = {

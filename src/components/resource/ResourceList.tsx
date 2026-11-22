@@ -206,6 +206,8 @@ export default function ResourceList({
     );
   }
   const moreError = error && resources.length > 0 ? error : null;
+  // Placeholder data belongs to the previous query, so its correction doesn't apply to this one.
+  const correctedQuery = queryResult.isPlaceholderData ? null : firstPage?.corrected_query?.trim() || null;
 
   // ── Toolbar ─────────────────────────────────────────────────────────────────
   const toolbar = (
@@ -220,6 +222,14 @@ export default function ResourceList({
             {query || 'all courses'}
           </Typography>
         </Typography>
+        {correctedQuery && correctedQuery !== query.trim() && (
+          <Typography variant="body2" color="text.secondary">
+            Showing results for{' '}
+            <Typography component="span" variant="body2" color="text.primary" sx={{ fontWeight: 600 }}>
+              {correctedQuery}
+            </Typography>
+          </Typography>
+        )}
       </Box>
 
       {/* Sort */}
