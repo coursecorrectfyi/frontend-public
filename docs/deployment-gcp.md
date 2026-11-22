@@ -94,9 +94,22 @@ _NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=...
 
 `_API_RELAY_SECRET_NAME` defaults to `api-relay-secret`; set it if your secret has another name.
 
-Optional: `_NEXT_PUBLIC_HOSTINGER_IP=<host>` proxies `/blog` to a WordPress site; `_NEXT_PUBLIC_EARLY_ACCESS_FORM_URL`, `_NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID` and `_NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID` enable early-access signups via a Google Form.
+Optional: `_NEXT_PUBLIC_HOSTINGER_IP=<host>` proxies `/blog` to a WordPress site; `_NEXT_PUBLIC_EARLY_ACCESS_FORM_URL`, `_NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID` and `_NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID` enable early-access signups via a Google Form. Set all three or none: the build stops on a partial or malformed setting (the form URL must end in `/formResponse`, the ids look like `entry.123456789`), because signups would otherwise fail without any error.
 
-The build pushes `$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/cc-frontend:<commit>` and deploys it as a public Cloud Run service: 1 vCPU, 1 GiB, concurrency 80, 0–3 instances (`_MAX_INSTANCES`), 30 s request timeout, startup CPU boost. These are the production settings; edit `cloudbuild.yaml` to change them.
+The build pushes `$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/cc-frontend:<commit>` and deploys it as a public Cloud Run service: 1 vCPU, 1 GiB, concurrency 80, 0–3 instances (`_MAX_INSTANCES`), 30 s request timeout, startup CPU boost. These are the production settings; edit `cloudbuild.yaml` to change them. The build runs on Cloud Build's default machine, which has a monthly free allowance.
+
+Every deploy pushes a new image, and Artifact Registry storage beyond the free 0.5 GB is billed monthly. Keep only recent images with a cleanup policy:
+
+```sh
+cat > /tmp/ar-cleanup.json <<'EOF'
+[{"name": "frontend-keep-recent", "action": {"type": "Keep"}, "mostRecentVersions": {"packageNamePrefixes": ["cc-frontend"], "keepCount": 10}},
+ {"name": "frontend-delete-old", "action": {"type": "Delete"}, "condition": {"packageNamePrefixes": ["cc-frontend"], "tagState": "any", "olderThan": "30d"}}]
+EOF
+gcloud artifacts repositories set-cleanup-policies $AR_REPO --location=$REGION --project=$PROJECT_ID \
+  --policy=/tmp/ar-cleanup.json --dry-run   # only logs what it would delete; rerun with --no-dry-run once that looks right
+```
+
+Both rules are limited to `cc-frontend`, so other images in the same repository (e.g. the backend's) are untouched. Keep rules win over delete rules: the 10 newest frontend images stay even when older than 30 days, so a rollback target is always there. If the repository is shared with the backend and already has the backend guide's policy (the 10 newest versions of every image), frontend images are covered and this step isn't needed.
 
 ## 3. Custom domain
 
@@ -116,7 +129,7 @@ curl -sI $URL | head -1
 gcloud run services logs read $SERVICE --region=$REGION --project=$PROJECT_ID --limit=50
 ```
 
-- **Build fails with `Missing required environment variable`**: `next.config.ts` requires `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_GTM_ID` at build time.
+- **Build fails with `Invalid build-time environment`**: `next.config.ts` requires `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_GTM_ID` at build time, and all three `NEXT_PUBLIC_EARLY_ACCESS_*` values or none. The message lists each problem.
 - **`Secret ... not found` on deploy**: create the secret (step 1) or set `_NEXTAUTH_SECRET_NAME` /
   `_API_RELAY_SECRET_NAME` to your secret's name.
 - **Visitors hit rate limits too soon / the backend reports "wrong relay secret"**: the frontend's

@@ -59,6 +59,26 @@ describe('ResourceList', () => {
     await waitFor(() => expect(container.querySelectorAll('.MuiSkeleton-root')).toHaveLength(0))
   })
 
+  describe('corrected query', () => {
+    it('says which query was searched when the backend corrected a typo', async () => {
+      mockApi('get', '/api/v1/resources/search', makeSearchResponse({ corrected_query: 'python' }))
+      renderList({ query: 'phtyon' })
+      expect(await screen.findByText(/Showing results for/)).toHaveTextContent('Showing results for python')
+      expect(screen.getByRole('heading', { name: /phtyon/ })).toBeInTheDocument() // the heading keeps what was typed
+    })
+
+    it.each([
+      ['null', { corrected_query: null }],
+      ['absent (older API)', { corrected_query: undefined }],
+      ['the query itself', { corrected_query: 'python' }],
+    ])('shows nothing when corrected_query is %s', async (_label, overrides) => {
+      mockApi('get', '/api/v1/resources/search', makeSearchResponse({ data: [makeResource({ title: 'A result' })], ...overrides }))
+      renderList({ query: 'python' })
+      expect(await screen.findByRole('link', { name: 'A result' })).toBeInTheDocument()
+      expect(screen.queryByText(/Showing results for/)).not.toBeInTheDocument()
+    })
+  })
+
   it('titles an empty query "all courses"', () => {
     renderList({ query: '' })
     expect(screen.getByRole('heading', { name: /all courses/ })).toBeInTheDocument()

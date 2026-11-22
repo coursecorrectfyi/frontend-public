@@ -84,6 +84,9 @@ All configuration is through environment variables (see `.env.example`). `NEXT_P
 
 See [docs/testing.md](docs/testing.md) for how the tests work and how to write them.
 
+CI (`.github/workflows/ci.yml`) runs `npm run verify -- --no-ci` and a gitleaks scan of the full history on every
+pull request and push to `main`.
+
 ## Deployment
 
 The `Dockerfile` builds a standalone Next.js image; `cloudbuild.yaml` builds it on Cloud Build and deploys it to Cloud Run. See [docs/deployment-gcp.md](docs/deployment-gcp.md).

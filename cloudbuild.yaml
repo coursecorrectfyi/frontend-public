@@ -101,5 +101,5 @@ substitutions:
   _NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID: ""
   _NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID: ""
 
-options:
-  machineType: "E2_HIGHCPU_8"
+# No `options: machineType`: the default build machine has a monthly free allowance; a larger one is billed from the
+# first minute and only shortens `npm ci` and `next build` a little.

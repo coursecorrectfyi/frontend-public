@@ -11,6 +11,8 @@ describe('shouldRetry', () => {
   it.each([
     ['a 500', api(500)],
     ['a 503', api(503)],
+    // "Load more" while the next page can't be ranked like the first; the contract says to retry the same request.
+    ['a 503 search_unavailable', api(503, { error: 'Search is temporarily unavailable', code: 'search_unavailable' })],
     ['a network error', new TypeError('Failed to fetch')],
   ])('retries %s twice', (_label, error) => {
     expect([0, 1, 2].map(n => shouldRetry(n, error))).toEqual([true, true, false])

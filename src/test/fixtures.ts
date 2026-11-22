@@ -68,6 +68,7 @@ export function makeSearchResponse(
     data: [makeResource(), makeResource()],
     next_cursor: null,
     vector_search: true,
+    corrected_query: null,
     ...overrides,
   }
 }

@@ -94,4 +94,6 @@ export interface ResourceSearchResponse {
   data: LearningResource[]
   next_cursor: string | null
   vector_search: boolean
+  /** The query as searched when typos were corrected ("Showing results for …"); null otherwise. Older APIs omit it. */
+  corrected_query?: string | null
 }

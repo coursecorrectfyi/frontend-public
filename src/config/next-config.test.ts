@@ -5,7 +5,13 @@ import {
   PHASE_PRODUCTION_SERVER,
 } from 'next/constants'
 import { describe, expect, it, vi } from 'vitest'
-import config, { assertRequiredBuildEnv, nextConfig, REQUIRED_BUILD_ENV, shouldValidateBuildEnv } from '../../next.config'
+import config, {
+  assertRequiredBuildEnv,
+  EARLY_ACCESS_BUILD_ENV,
+  nextConfig,
+  REQUIRED_BUILD_ENV,
+  shouldValidateBuildEnv,
+} from '../../next.config'
 
 const validEnv = { NEXT_PUBLIC_API_URL: 'https://api.example.com', NEXT_PUBLIC_GTM_ID: 'GTM-ABC123' }
 
@@ -52,6 +58,52 @@ describe('assertRequiredBuildEnv', () => {
   it('reads process.env by default', () => {
     vi.stubEnv('NEXT_PUBLIC_API_URL', '')
     expect(() => assertRequiredBuildEnv()).toThrow('NEXT_PUBLIC_API_URL is not set')
+  })
+})
+
+describe('assertRequiredBuildEnv: early-access form (all three or none)', () => {
+  const form = {
+    NEXT_PUBLIC_EARLY_ACCESS_FORM_URL: 'https://docs.google.com/forms/d/e/FORM_ID/formResponse',
+    NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID: 'entry.111',
+    NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID: 'entry.222',
+  }
+
+  it('lists the three variables', () => {
+    expect(EARLY_ACCESS_BUILD_ENV).toEqual(Object.keys(form))
+  })
+
+  it('accepts none of them (the form is off)', () => {
+    expect(() => assertRequiredBuildEnv(validEnv)).not.toThrow()
+    expect(() =>
+      assertRequiredBuildEnv({ ...validEnv, ...Object.fromEntries(Object.keys(form).map(k => [k, ' '])) }),
+    ).not.toThrow()
+  })
+
+  it('accepts all three, well-formed', () => {
+    expect(() => assertRequiredBuildEnv({ ...validEnv, ...form })).not.toThrow()
+  })
+
+  it('refuses a partial setting and names what is missing', () => {
+    const { NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID: _omitted, ...partial } = form
+    expect(() => assertRequiredBuildEnv({ ...validEnv, ...partial })).toThrow(
+      'NEXT_PUBLIC_EARLY_ACCESS_EMAIL_ENTRY_ID not set: set all three NEXT_PUBLIC_EARLY_ACCESS_* variables, or none',
+    )
+  })
+
+  it.each([
+    ['a viewform link', 'https://docs.google.com/forms/d/e/FORM_ID/viewform'],
+    ['another host', 'https://example.com/forms/d/e/FORM_ID/formResponse'],
+    ['plain http', 'http://docs.google.com/forms/d/e/FORM_ID/formResponse'],
+  ])('refuses a form URL that is %s', (_label, url) => {
+    expect(() => assertRequiredBuildEnv({ ...validEnv, ...form, NEXT_PUBLIC_EARLY_ACCESS_FORM_URL: url })).toThrow(
+      `NEXT_PUBLIC_EARLY_ACCESS_FORM_URL must be a Google Form's https://docs.google.com/forms/.../formResponse URL, got "${url}"`,
+    )
+  })
+
+  it.each(['111', 'entry.', 'entry.abc', 'emailAddress'])('refuses an entry id that is not entry.<number>: %s', id => {
+    expect(() =>
+      assertRequiredBuildEnv({ ...validEnv, ...form, NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID: id }),
+    ).toThrow(`NEXT_PUBLIC_EARLY_ACCESS_INTENT_ENTRY_ID must look like "entry.123456789", got "${id}"`)
   })
 })
 
