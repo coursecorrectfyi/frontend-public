@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { CONTACT_EMAIL } from '@/config/content/contact'
 import { expectMainLayout, renderPage } from '@/test/pages'
 import { metadata } from './layout'
 import PrivacyPolicy from './page'
@@ -24,5 +25,10 @@ describe('privacy policy page', () => {
     ]) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument()
     }
+  })
+
+  it('gives the contact email for data requests and questions (src/config/content/contact.ts)', async () => {
+    await renderPage(<PrivacyPolicy />)
+    expect(screen.getAllByText(new RegExp(CONTACT_EMAIL.replace('.', '\\.'))).length).toBeGreaterThan(0)
   })
 })

@@ -1,5 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { TEAM_MEMBERS } from '@/config/content/team'
 import { expectMainLayout, renderPage } from '@/test/pages'
 import { metadata } from './layout'
 import AboutUs from './page'
@@ -36,7 +37,7 @@ describe('about us page', () => {
 
   it('introduces the team', async () => {
     await renderPage(<AboutUs />)
-    for (const name of ['Alex Example', 'Sam Placeholder', 'Jordan Sample', 'Taylor Demo']) {
+    for (const { name } of TEAM_MEMBERS) {
       expect(screen.getByRole('heading', { name })).toBeInTheDocument()
     }
   })

@@ -1,5 +1,6 @@
 'use client';
 
+import { CONTACT_EMAIL } from "@/config/content/contact";
 import MainLayout from "@/layouts/MainLayout";
 import { Container, Divider, Typography } from "@mui/material";
 
@@ -58,7 +59,7 @@ const terms = [
   },
   {
     heading: 'Contact Us',
-    text: 'If you have any questions or concerns regarding these Terms, please contact us at contact@example.com'
+    text: `If you have any questions or concerns regarding these Terms, please contact us at ${CONTACT_EMAIL}`
   },
   {
     heading: 'Entire Agreement',

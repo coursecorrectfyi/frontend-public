@@ -3,6 +3,7 @@
 import AppSearch from "@/components/AppSearch";
 import { CCLogo } from "@/components/CCLogo";
 import { TESTIMONIALS, TestimonialCard } from "@/components/home/Testimonials";
+import { TEAM_MEMBERS } from "@/config/content/team";
 import TwoToneHeading from "@/components/DualToneHeading";
 import YouTubeChannelCarousel from "@/components/YouTubeChannelCarousel";
 import MainLayout from "@/layouts/MainLayout";
@@ -67,36 +68,6 @@ const storyBlocks = [
   }
 ]
 
-const teamMates = [
-  {
-    name: "Alex Example",
-    designation: "Co-founder and CTO",
-    description: "The Tech Wizard who turns ambitious concepts into game-changing reality!",
-    experience: "Ex - Example Corp",
-    image: "/images/avatar-placeholder.svg",
-  },
-  {
-    name: "Sam Placeholder",
-    designation: "Co-founder and CSO",
-    description: "Growth hacker who blends business savvy with relentless drive to supercharge partnerships and alliances.",
-    experience: "Ex - Example Corp",
-    image: "/images/avatar-placeholder.svg",
-  },
-  {
-    name: "Jordan Sample",
-    designation: "Co-founder and CMO",
-    description: "Marketing expert who turns clever strategies into captivating brand magic!",
-    experience: "Ex - Example Corp",
-    image: "/images/avatar-placeholder.svg",
-  },
-  {
-    name: "Taylor Demo",
-    designation: "Co-founder and CEO",
-    description: "Product Marketing Pro who steers CourseCorrect with a visionary roadmap!",
-    experience: "Ex - Example Corp",
-    image: "/images/avatar-placeholder.svg",
-  },
-];
 
 const StyledCard = styled(Card)(({ theme }) => ({
   transition: 'transform 0.3s, box-shadow 0.3s',
@@ -357,9 +328,9 @@ export default function AboutUs() {
 
 
           <Grid2 container spacing={2} pt={4} justifyContent='center' alignItems='center' gap={4}>
-            {teamMates.map((teamMate, index) => (
+            {TEAM_MEMBERS.map((teamMate, index) => (
               <Grid2 key={`story` + index}>
-                <CardActionArea>
+                <CardActionArea {...(teamMate.profileLink ? { href: teamMate.profileLink, target: '_blank', rel: 'noopener noreferrer' } : {})}>
                   <StyledCard sx={{
                     maxWidth: 345,
                   }}>

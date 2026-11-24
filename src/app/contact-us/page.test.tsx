@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { CONTACT_EMAIL } from '@/config/content/contact'
 import { expectMainLayout, renderPage } from '@/test/pages'
 import { metadata } from './layout'
 import ContactUs from './page'
@@ -21,7 +22,7 @@ describe('contact us page', () => {
   it('offers an email address', async () => {
     await renderPage(<ContactUs />)
     expect(screen.getByRole('heading', { name: "Let's Chat!" })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'contact@example.com' })).toHaveAttribute('href', 'mailto:contact@example.com')
+    expect(screen.getByRole('link', { name: CONTACT_EMAIL })).toHaveAttribute('href', `mailto:${CONTACT_EMAIL}`)
   })
 
   it('links the social channels and embeds two YouTube videos', async () => {
