@@ -1,4 +1,5 @@
 import YouTubeEmbed from "@/components/YouTubeEmbed";
+import { CONTACT_EMAIL } from "@/config/content/contact";
 import { socialLinks } from "@/config/content/social";
 import MainLayout from "@/layouts/MainLayout";
 import ExpandMore from '@mui/icons-material/ExpandMore';
@@ -44,7 +45,7 @@ export default function ContactUs() {
           <Typography variant="h4">Let's Chat!</Typography>
           <Typography variant="body1">Got questions, feedback, or just want to say hi? We’re all ears!</Typography>
           <Typography variant="body1">Whether you need help navigating CourseCorrect or want to share how much we’ve changed your life (we hope!), we’re here for it. Drop us a message, and we’ll make sure to get back to you!</Typography>
-          <Typography variant="body1">Email us on <Link href="mailto:contact@example.com">contact@example.com</Link></Typography>
+          <Typography variant="body1">Email us on <Link href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</Link></Typography>
         </Container>
 
         {/* Social Media */}

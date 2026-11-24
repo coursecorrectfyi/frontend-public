@@ -1,5 +1,6 @@
 'use client';
 
+import { CONTACT_EMAIL } from "@/config/content/contact";
 import MainLayout from "@/layouts/MainLayout";
 import { Container, Divider, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
 
@@ -70,7 +71,7 @@ const sections: Section[] = [
     paragraphs: [
       'If you are located in the European Union, you have the following rights regarding your personal data:',
       '\u2022 Right of access — request a copy of the data we hold about you.\n\u2022 Right to erasure — request deletion of your personal data ("right to be forgotten").\n\u2022 Right to rectification — request correction of inaccurate data.\n\u2022 Right to data portability — receive your data in a machine-readable format.\n\u2022 Right to object — object to processing based on legitimate interests.\n\u2022 Right to withdraw consent — where processing is based on consent, withdraw it at any time.',
-      'To exercise any of these rights, email contact@example.com with the subject line "Data Request". We will respond within 30 days as required by GDPR.',
+      `To exercise any of these rights, email ${CONTACT_EMAIL} with the subject line "Data Request". We will respond within 30 days as required by GDPR.`,
       'CourseCorrect stores data on Google Cloud Platform infrastructure in the United States. International data transfers are covered by Google\'s Data Processing Agreement and the EU-US Data Privacy Framework.',
     ],
   },
@@ -78,7 +79,7 @@ const sections: Section[] = [
     heading: 'California Privacy Rights (CCPA)',
     paragraphs: [
       'If you are a California resident, you have the right to know what personal information we collect about you and how it is used, request deletion of your personal information, and opt out of the sale of personal information.',
-      'We do not sell personal information. To submit a data request, email contact@example.com with the subject line "California Data Request".',
+      `We do not sell personal information. To submit a data request, email ${CONTACT_EMAIL} with the subject line "California Data Request".`,
     ],
   },
   {
@@ -102,7 +103,7 @@ const sections: Section[] = [
   {
     heading: 'Contact Us',
     paragraphs: [
-      'If you have any questions or concerns about this Privacy Policy, please contact us at contact@example.com.',
+      `If you have any questions or concerns about this Privacy Policy, please contact us at ${CONTACT_EMAIL}.`,
     ],
   },
 ];

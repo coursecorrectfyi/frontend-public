@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { CONTACT_EMAIL } from '@/config/content/contact'
 import { expectMainLayout, renderPage } from '@/test/pages'
 import { metadata } from './layout'
 import Terms from './page'
@@ -25,5 +26,10 @@ describe('terms page', () => {
     ]) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument()
     }
+  })
+
+  it('gives the contact email for questions about the terms (src/config/content/contact.ts)', async () => {
+    await renderPage(<Terms />)
+    expect(screen.getAllByText(new RegExp(CONTACT_EMAIL.replace('.', '\\.'))).length).toBeGreaterThan(0)
   })
 })
