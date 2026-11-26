@@ -45,23 +45,27 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Order matters (MUI's App Router setup): the color-scheme script first in <body>, then the Emotion cache provider
+  // around everything that renders styles, the theme (with CssBaseline) inside it. A theme outside the cache provider
+  // writes its global styles inline into <body> during server rendering, the browser doesn't, and hydration fails
+  // on every page (React then rebuilds the page client-side; see src/app/layout.test.tsx).
   return (
-    <BrandingThemeProvider>
-      <html lang="en" suppressHydrationWarning>
-        <head>
-          <meta name="viewport" content="initial-scale=1, width=device-width" />
-          <GoogleTagManager />
-        </head>
-        <body>
-          <Providers>
-            <InitColorSchemeScript defaultMode="dark" attribute="data-mui-color-scheme" />
-            <AppRouterCacheProvider>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <meta name="viewport" content="initial-scale=1, width=device-width" />
+        <GoogleTagManager />
+      </head>
+      <body>
+        <InitColorSchemeScript defaultMode="dark" attribute="data-mui-color-scheme" />
+        <AppRouterCacheProvider>
+          <BrandingThemeProvider>
+            <Providers>
               <PageViewTracker />
               {children}
-            </AppRouterCacheProvider>
-          </Providers>
-        </body>
-      </html>
-    </BrandingThemeProvider>
+            </Providers>
+          </BrandingThemeProvider>
+        </AppRouterCacheProvider>
+      </body>
+    </html>
   );
 }

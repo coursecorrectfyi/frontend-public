@@ -34,6 +34,7 @@ describe('root layout', () => {
     // Dark mode by default, applied before hydration to avoid a flash.
     expect(html).toContain('data-mui-color-scheme')
   })
+
 })
 
 describe('GoogleTagManager', () => {
