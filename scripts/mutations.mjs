@@ -271,6 +271,8 @@ export default [
     find: "onRetry={() => void (isFetchNextPageError ? fetchNextPage() : refetch())}", replace: "onRetry={() => void refetch()}", tests: [resourceList] },
   { id: "results/first-page-retry", description: "no \"Try again\" when the search fails", file: "src/components/resource/ResourceList.tsx",
     find: "fallback={SEARCH_FAILED} onRetry={() => void refetch()}", replace: "fallback={SEARCH_FAILED}", tests: [resourceList] },
+  { id: "layout/split-view-ids", description: "split view panels back on generated ids (crash \"No group found for id\")", file: "src/layouts/SplitViewLayout.tsx",
+    find: "<PanelGroup id={SPLIT_VIEW_IDS.group} ", replace: "<PanelGroup ", tests: ['src/layouts/SplitViewLayout.test.tsx'] },
   { id: "results/corrected-query", description: "the corrected query is never shown", file: "src/components/resource/ResourceList.tsx",
     find: "        {correctedQuery && correctedQuery !== query.trim() && (", replace: "        {false && (", tests: [resourceList] },
   { id: "results/corrected-query-same", description: "\"Showing results for\" repeats the query itself", file: "src/components/resource/ResourceList.tsx",

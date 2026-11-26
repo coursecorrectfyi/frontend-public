@@ -5,6 +5,14 @@ import { alpha, Box, Container, Fab, Paper, SwipeableDrawer, useMediaQuery, useT
 import { ReactNode, useRef, useState } from 'react';
 import { ImperativePanelHandle, Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 
+/** Fixed ids for react-resizable-panels (see the comment on the PanelGroup below). */
+export const SPLIT_VIEW_IDS = {
+  group: 'split-view',
+  left: 'split-view-left',
+  handle: 'split-view-handle',
+  right: 'split-view-right',
+} as const;
+
 interface SplitViewLayoutProps {
   leftContent: ReactNode;
   rightContent: ReactNode;
@@ -46,10 +54,16 @@ export default function SplitViewLayout({ leftContent, rightContent }: SplitView
           height: '100%'
         }}
       >
-        {/* Desktop View with Resizable Panels */}
+        {/* Desktop View with Resizable Panels.
+            Fixed ids (and `order`, which the library requires with them): otherwise react-resizable-panels uses
+            React's useId, and if the browser computes a different id than the server rendered (any difference in
+            the tree above), its effects can't find the group's element and throw "No group found for id", which
+            crashes the page. There is only one split view per page, so fixed ids can't collide. */}
         {!isMobile && (
-          <PanelGroup direction="horizontal" style={{ width: '100%', height: '100%' }}>
+          <PanelGroup id={SPLIT_VIEW_IDS.group} direction="horizontal" style={{ width: '100%', height: '100%' }}>
             <Panel
+              id={SPLIT_VIEW_IDS.left}
+              order={1}
               defaultSize={DEFAULT_SPLIT_RATIO}
               minSize={40} // Minimum percentage of total width
               style={{ minWidth: '300px' }}
@@ -70,7 +84,7 @@ export default function SplitViewLayout({ leftContent, rightContent }: SplitView
               </Paper>
             </Panel>
 
-            <PanelResizeHandle onDoubleClick={handleDoubleClick}>
+            <PanelResizeHandle id={SPLIT_VIEW_IDS.handle} onDoubleClick={handleDoubleClick}>
               <Box
                 sx={{
                   width: '6px',
@@ -101,6 +115,8 @@ export default function SplitViewLayout({ leftContent, rightContent }: SplitView
             </PanelResizeHandle>
 
             <Panel
+              id={SPLIT_VIEW_IDS.right}
+              order={2}
               defaultSize={DEFAULT_SPLIT_RATIO}
               minSize={40} // Minimum percentage of total width
               style={{ minWidth: '300px' }}
